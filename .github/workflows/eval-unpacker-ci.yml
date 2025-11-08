@@ -16,7 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Extra safety: fail early if pyproject.toml isn't where we expect
       - name: Ensure pyproject exists
         run: test -f tools/eval-unpacker/pyproject.toml
 
@@ -35,12 +34,7 @@ jobs:
         working-directory: tools/eval-unpacker
         run: |
           python -c "import eval_unpacker as m; print('version:', getattr(m,'__version__','n/a'))"
-          python - <<'PY'
-import shutil, sys
-p = shutil.which('eval-unpack')
-print('eval-unpack on PATH:', p)
-sys.exit(0 if p else 1)
-PY
+          python -c "import shutil, sys; p=shutil.which('eval-unpack'); print('eval-unpack on PATH:', p); sys.exit(0 if p else 1)"
 
       - name: CLI smoke test
         working-directory: tools/eval-unpacker
