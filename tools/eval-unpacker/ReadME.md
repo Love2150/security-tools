@@ -47,4 +47,7 @@ Optional --beautify (jsbeautifier)
 
 --recursive nested unpacking
 
+![Eval-Unpacker CI](https://github.com/Love2150/security-tools/actions/workflows/eval-unpacker-ci.yml/badge.svg)
+
+
 Heuristic fix for malformed setRequestHeader("Name: value", "val")
