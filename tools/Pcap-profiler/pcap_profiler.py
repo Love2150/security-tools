@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV export)
-# Usage examples (PowerShell):
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --top 10
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --top 10 --decode tcp.port==36050,http
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==8443,tls --json out.json --csv out.csv
+# PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV + config profiles)
+# Example (PowerShell):
+#   python .\pcap_profiler.py "C:\path\capture.pcap"
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --profile default
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==36050,http
 
 from __future__ import annotations
 import argparse
@@ -15,15 +15,68 @@ import json
 import csv
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
-# ----- Dependencies check -----
 try:
     import pyshark
 except Exception:
     print("ERROR: pyshark not installed. Run: pip install pyshark", file=sys.stderr)
     sys.exit(1)
 
+# ---------- Config loading ----------
+DEFAULT_CONFIG_LOCATIONS: List[str] = []
+
+def _init_config_locations():
+    here = os.getcwd()
+    DEFAULT_CONFIG_LOCATIONS.append(os.path.join(here, "pcap_profiler.config.json"))
+    # Windows user locations
+    home = os.path.expanduser("~")
+    DEFAULT_CONFIG_LOCATIONS.append(os.path.join(home, ".pcap_profiler.json"))
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        DEFAULT_CONFIG_LOCATIONS.append(os.path.join(appdata, "pcap_profiler", "config.json"))
+
+_init_config_locations()
+
+def load_config(explicit_path: Optional[str], profile: Optional[str]) -> Dict[str, Any]:
+    """
+    Loads JSON config from:
+      1) explicit --config path (if provided)
+      2) ./pcap_profiler.config.json
+      3) %APPDATA%\pcap_profiler\config.json
+      4) %USERPROFILE%\.pcap_profiler.json
+    Supports top-level keys and named profiles.
+    """
+    paths = []
+    if explicit_path:
+        paths = [explicit_path]
+    else:
+        paths = DEFAULT_CONFIG_LOCATIONS
+
+    cfg: Dict[str, Any] = {}
+    for p in paths:
+        try:
+            if os.path.isfile(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                break
+        except Exception:
+            pass
+
+    # If a profile is requested, merge it on top
+    prof_name = profile or cfg.get("default_profile")
+    if prof_name:
+        profiles = cfg.get("profiles", {})
+        prof = profiles.get(prof_name, {})
+        # Merge (profile wins)
+        merged = dict(cfg)
+        merged.pop("profiles", None)
+        merged.update(prof)
+        cfg = merged
+
+    return cfg
+
+# ---------- System helpers ----------
 def ensure_tshark() -> None:
     if shutil.which("tshark") is None:
         print("ERROR: TShark not found on PATH.\n"
@@ -31,7 +84,6 @@ def ensure_tshark() -> None:
               "Then restart PowerShell/cmd.", file=sys.stderr)
         sys.exit(1)
 
-# ----- Helpers -----
 def safe_int(x: Any, default: int = 0) -> int:
     try:
         return int(str(x))
@@ -39,7 +91,6 @@ def safe_int(x: Any, default: int = 0) -> int:
         return default
 
 def _parse_iso_utc(s: str) -> Optional[datetime]:
-    """Parse a few common ISO forms and return tz-aware UTC datetime."""
     if not s:
         return None
     s = str(s).strip()
@@ -65,7 +116,6 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Return a tz-aware UTC datetime for a packet WITHOUT touching time_epoch."""
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
@@ -90,11 +140,10 @@ def fmt_bytes(n: int) -> str:
         val /= 1024
     return f"{val:.1f} TB"
 
-# ----- Core profiling -----
+# ---------- Core profiling ----------
 def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = None) -> Dict[str, Any]:
     ensure_tshark()
 
-    # Dedicated asyncio event loop (Windows-safe for pyshark)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -108,17 +157,14 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
     dst_ips = Counter()
     dst_ports = Counter()
 
-    # Build custom -d parameters for tshark
     custom_params: list[str] = []
     for m in (decode_maps or []):
-        # expected form: "tcp.port==36050,http" or "tcp.port==8443,tls"
         custom_params += ["-d", m]
 
-    # Pass 1: overall scan
     cap = pyshark.FileCapture(
         path,
         keep_packets=False,
-        use_json=False,           # avoid schema quirks that caused float errors
+        use_json=False,
         eventloop=loop,
         custom_parameters=custom_params
     )
@@ -161,7 +207,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
     finally:
         cap.close()
 
-    # Pass 2: HTTP
+    # HTTP
     http_cap = pyshark.FileCapture(
         path,
         keep_packets=False,
@@ -198,7 +244,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
     finally:
         http_cap.close()
 
-    # Pass 3: TLS
+    # TLS
     tls_cap = pyshark.FileCapture(
         path,
         keep_packets=False,
@@ -259,7 +305,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
         "tls_ja3": tls_ja3.most_common(top_n),
     }
 
-# ----- Output -----
+# ---------- Output ----------
 def print_summary(s: Dict[str, Any]) -> None:
     print(f"PCAP Quick Profiler — {s['file']}")
     print("=" * 80)
@@ -311,19 +357,38 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w.writeheader()
         w.writerows(rows)
 
-# ----- CLI -----
+# ---------- CLI ----------
 def main():
-    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Add --decode for non-standard ports.")
+    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Supports config + profiles.")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
-    ap.add_argument("--top", type=int, default=10, help="Top-N entries per category")
+    ap.add_argument("--top", type=int, help="Top-N entries per category (overrides config)")
     ap.add_argument("--decode", action="append", default=[],
-                    help="Decode-as mappings like tcp.port==36050,http (repeatable)")
+                    help="Decode-as mapping like tcp.port==36050,http (repeatable; merges with config)")
     ap.add_argument("--json", help="Write full summary to JSON file")
     ap.add_argument("--csv", help="Write a flat CSV of top IPs/ports to this path")
+    ap.add_argument("--config", help="Path to config JSON (optional)")
+    ap.add_argument("--profile", help="Profile name from config (optional)")
     args = ap.parse_args()
 
+    # Merge config
+    cfg = load_config(args.config, args.profile)
+
+    # Effective settings: CLI overrides config
+    effective_top = args.top if args.top is not None else int(cfg.get("top", 10))
+    decode_cfg = cfg.get("decode", []) or []
+    # Expand http_ports/tls_ports into decode rules
+    http_ports = cfg.get("http_ports", []) or []
+    tls_ports = cfg.get("tls_ports", []) or []
+    for p in http_ports:
+        decode_cfg.append(f"tcp.port=={p},http")
+    for p in tls_ports:
+        decode_cfg.append(f"tcp.port=={p},tls")
+
+    # Merge CLI --decode after config (CLI wins if duplicates)
+    decode_maps = list(dict.fromkeys(decode_cfg + (args.decode or [])))
+
     try:
-        result = profile_pcap(args.pcap, args.top, args.decode)
+        result = profile_pcap(args.pcap, effective_top, decode_maps)
         print_summary(result)
         if args.json:
             write_json(args.json, result)
@@ -337,3 +402,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
