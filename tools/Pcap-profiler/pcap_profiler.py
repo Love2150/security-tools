@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly + robust event loop handling)
+# PCAP Quick Profiler (Windows-friendly + robust time parsing)
 # Author: Brandon Love
 # Usage:
 #   python pcap_profiler.py "C:\path\to\capture.pcap" --top 10
-#   python pcap_profiler.py "capture.pcap" --json out.json --csv out.csv
 
 from __future__ import annotations
 import argparse
-import csv
-import json
 import os
 import sys
 import shutil
@@ -38,8 +35,50 @@ def safe_int(x: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+def _parse_iso_utc(s: str) -> Optional[datetime]:
+    """Parse a few common ISO forms and return tz-aware UTC datetime."""
+    s = s.strip()
+    if not s:
+        return None
+    # Handle trailing Z
+    if s.endswith("Z"):
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception:
+            pass
+    # Plain ISO like 2010-07-04T20:24:16
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
+    except Exception:
+        pass
+    # Fallback formats
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+    return None
+
+def _parse_epoch_or_iso(s: str) -> Optional[datetime]:
+    """Try epoch float first; if that fails, try ISO."""
+    ss = str(s).strip()
+    # quick check for "looks like number"
+    try:
+        # allow values like 1731101234 or 1731101234.123
+        val = float(ss)
+        return datetime.fromtimestamp(val, tz=timezone.utc)
+    except Exception:
+        pass
+    return _parse_iso_utc(ss)
+
 def safe_sniff_time(pkt) -> Optional[datetime]:
     """Return a tz-aware UTC datetime for a packet."""
+    # Best source: sniff_time (pyshark returns datetime or None)
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
@@ -47,22 +86,22 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
         except Exception:
             pass
 
+    # Fallbacks in frame_info
     fi = getattr(pkt, "frame_info", None)
     if fi:
-        ts = getattr(fi, "time_epoch", None)
-        if ts is not None:
-            try:
-                return datetime.fromtimestamp(float(str(ts)), tz=timezone.utc)
-            except Exception:
-                pass
-        iso = getattr(fi, "time", None)
-        if iso:
-            s = str(iso).strip()
-            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-                try:
-                    return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
+        # Some captures put ISO into time_epoch (!)
+        ts_epoch = getattr(fi, "time_epoch", None)
+        if ts_epoch is not None:
+            parsed = _parse_epoch_or_iso(ts_epoch)
+            if parsed:
+                return parsed
+        # Another place: human readable time
+        ts_human = getattr(fi, "time", None)
+        if ts_human:
+            parsed = _parse_iso_utc(str(ts_human))
+            if parsed:
+                return parsed
+
     return None
 
 def fmt_bytes(n: int) -> str:
@@ -74,40 +113,39 @@ def fmt_bytes(n: int) -> str:
         val /= 1024
     return f"{val:.1f} TB"
 
-def pct(part: int, whole: int) -> str:
-    return f"{(100 * part / whole):.1f}%" if whole else "0.0%"
-
 # ----- Core profiling -----
 def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     ensure_tshark()
 
-    # Dedicated asyncio event loop (needed on Windows)
+    # Dedicated asyncio event loop (needed on Windows for pyshark/tshark)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, eventloop=loop)
-
     total_packets = 0
     total_bytes = 0
-    first_ts = None
-    last_ts = None
+    first_ts: Optional[datetime] = None
+    last_ts: Optional[datetime] = None
     proto_counter = Counter()
     proto_bytes = Counter()
     src_ips = Counter()
     dst_ips = Counter()
     dst_ports = Counter()
 
+    # Pass 1: overall scan
+    cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, eventloop=loop)
     try:
         for pkt in cap:
             total_packets += 1
             frame_len = safe_int(getattr(pkt.frame_info, "len", 0))
             total_bytes += frame_len
+
             dt = safe_sniff_time(pkt)
             if dt:
                 if not first_ts or dt < first_ts:
                     first_ts = dt
                 if not last_ts or dt > last_ts:
                     last_ts = dt
+
             hl = getattr(pkt, "highest_layer", "UNKNOWN")
             proto_counter[hl] += 1
             proto_bytes[hl] += frame_len
@@ -134,8 +172,9 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     finally:
         cap.close()
 
-    # HTTP analysis
-    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="http", eventloop=loop)
+    # Pass 2: HTTP
+    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True,
+                                   display_filter="http", eventloop=loop)
     http_hosts = Counter()
     http_uas = Counter()
     http_urls = Counter()
@@ -164,8 +203,9 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     finally:
         http_cap.close()
 
-    # TLS analysis
-    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="tls", eventloop=loop)
+    # Pass 3: TLS
+    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True,
+                                  display_filter="tls", eventloop=loop)
     tls_versions = Counter()
     tls_ciphers = Counter()
     tls_sni = Counter()
@@ -219,6 +259,15 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     }
 
 # ----- Output -----
+def fmt_bytes(n: int) -> str:
+    units = ["B", "KB", "MB", "GB"]
+    val = float(n)
+    for u in units:
+        if val < 1024:
+            return f"{val:.1f} {u}"
+        val /= 1024
+    return f"{val:.1f} TB"
+
 def print_summary(s: Dict[str, Any]) -> None:
     print(f"PCAP Quick Profiler — {s['file']}")
     print("=" * 80)
@@ -232,26 +281,26 @@ def print_summary(s: Dict[str, Any]) -> None:
     else:
         print("Duration: 0.00s   Avg throughput: n/a")
 
-    def show_section(title, items):
+    def show(title, items):
         print(f"\n{title}:")
         if not items:
             print("  (none)")
         for k, v in items:
-            print(f"  - {k} ({v})")
+            print(f"  - {k}  ({v})")
 
-    show_section("🖧 Protocols", s["protocols"])
-    show_section("📦 Bytes by protocol", s["bytes_by_protocol"])
-    show_section("🌍 Top Source IPs", s["src_ips"])
-    show_section("🌍 Top Destination IPs", s["dst_ips"])
-    show_section("🔢 Top Destination Ports", s["dst_ports"])
-    show_section("🌐 HTTP Hosts", s["http_hosts"])
-    show_section("🌐 HTTP User-Agents", s["http_user_agents"])
-    show_section("🌐 HTTP URLs", s["http_urls"])
-    show_section("📁 HTTP Content Types", s["http_content_types"])
-    show_section("🔐 TLS Versions", s["tls_versions"])
-    show_section("🔐 TLS Ciphers", s["tls_ciphers"])
-    show_section("🔐 TLS SNI", s["tls_sni"])
-    show_section("🔐 TLS JA3", s["tls_ja3"])
+    show("🖧 Protocols", s["protocols"])
+    show("📦 Bytes by protocol", s["bytes_by_protocol"])
+    show("🌍 Top Source IPs", s["src_ips"])
+    show("🌍 Top Destination IPs", s["dst_ips"])
+    show("🔢 Top Destination Ports", s["dst_ports"])
+    show("🌐 HTTP Hosts", s["http_hosts"])
+    show("🌐 HTTP User-Agents", s["http_user_agents"])
+    show("🌐 HTTP URLs", s["http_urls"])
+    show("📁 HTTP Content Types", s["http_content_types"])
+    show("🔐 TLS Versions", s["tls_versions"])
+    show("🔐 TLS Ciphers", s["tls_ciphers"])
+    show("🔐 TLS SNI", s["tls_sni"])
+    show("🔐 TLS JA3", s["tls_ja3"])
 
 # ----- CLI -----
 def main():
