@@ -49,36 +49,41 @@ def safe_int(s: Any, default: int = 0) -> int:
     except Exception:
         return default
 
-
 from datetime import datetime, timezone
 
-def to_dt(value) -> datetime | None:
+def to_dt(value):
     """
-    Parse either:
-      - epoch-like numbers/strings: 1699470123.123
-      - ISO strings: '2010-07-04T20:24:16' (with/without tz)
-    Return tz-aware UTC datetime, or None.
+    Safely convert to datetime:
+      - Supports float/int epoch timestamps
+      - Supports ISO 8601 strings (e.g. '2010-07-04T20:24:16')
+    Returns tz-aware UTC datetime or None.
     """
     if value is None:
         return None
 
+    # Handle epoch timestamps
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+
+    # Try string parsing
     s = str(value).strip()
-    # 1) Try epoch
+
+    # 1) Epoch-like numeric strings
     try:
         return datetime.fromtimestamp(float(s), tz=timezone.utc)
     except Exception:
         pass
 
-    # 2) Try ISO 8601
-    try:
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        else:
-            dt = dt.astimezone(tz=timezone.utc)
-        return dt
-    except Exception:
-        return None
+    # 2) ISO-like date strings
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+
+    return None
+
 
 
 
