@@ -1,1 +1,0 @@
-eval(function(p,a,c,k,e,d){return p}('abc',10,2,'a|b'))
