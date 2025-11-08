@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly + robust time parsing)
+# PCAP Quick Profiler (Windows-friendly, no time_epoch float parsing)
 # Author: Brandon Love
 # Usage:
 #   python pcap_profiler.py "C:\path\to\capture.pcap" --top 10
@@ -37,16 +37,16 @@ def safe_int(x: Any, default: int = 0) -> int:
 
 def _parse_iso_utc(s: str) -> Optional[datetime]:
     """Parse a few common ISO forms and return tz-aware UTC datetime."""
-    s = s.strip()
     if not s:
         return None
-    # Handle trailing Z
+    s = str(s).strip()
+    # Support trailing 'Z'
     if s.endswith("Z"):
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
         except Exception:
             pass
-    # Plain ISO like 2010-07-04T20:24:16
+    # Native ISO
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -64,44 +64,23 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
             continue
     return None
 
-def _parse_epoch_or_iso(s: str) -> Optional[datetime]:
-    """Try epoch float first; if that fails, try ISO."""
-    ss = str(s).strip()
-    # quick check for "looks like number"
-    try:
-        # allow values like 1731101234 or 1731101234.123
-        val = float(ss)
-        return datetime.fromtimestamp(val, tz=timezone.utc)
-    except Exception:
-        pass
-    return _parse_iso_utc(ss)
-
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Return a tz-aware UTC datetime for a packet."""
-    # Best source: sniff_time (pyshark returns datetime or None)
+    """Return a tz-aware UTC datetime for a packet WITHOUT touching time_epoch."""
+    # Best: sniff_time from pyshark (datetime or None)
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
             return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
         except Exception:
             pass
-
-    # Fallbacks in frame_info
+    # Fallback: frame_info.time (string)
     fi = getattr(pkt, "frame_info", None)
     if fi:
-        # Some captures put ISO into time_epoch (!)
-        ts_epoch = getattr(fi, "time_epoch", None)
-        if ts_epoch is not None:
-            parsed = _parse_epoch_or_iso(ts_epoch)
+        human = getattr(fi, "time", None)
+        if human:
+            parsed = _parse_iso_utc(str(human))
             if parsed:
                 return parsed
-        # Another place: human readable time
-        ts_human = getattr(fi, "time", None)
-        if ts_human:
-            parsed = _parse_iso_utc(str(ts_human))
-            if parsed:
-                return parsed
-
     return None
 
 def fmt_bytes(n: int) -> str:
@@ -131,8 +110,8 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     dst_ips = Counter()
     dst_ports = Counter()
 
-    # Pass 1: overall scan
-    cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, eventloop=loop)
+    # Pass 1: overall scan  (use_json=False to avoid schema weirdness)
+    cap = pyshark.FileCapture(path, keep_packets=False, use_json=False, eventloop=loop)
     try:
         for pkt in cap:
             total_packets += 1
@@ -173,7 +152,7 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         cap.close()
 
     # Pass 2: HTTP
-    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True,
+    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=False,
                                    display_filter="http", eventloop=loop)
     http_hosts = Counter()
     http_uas = Counter()
@@ -204,7 +183,7 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         http_cap.close()
 
     # Pass 3: TLS
-    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True,
+    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=False,
                                   display_filter="tls", eventloop=loop)
     tls_versions = Counter()
     tls_ciphers = Counter()
@@ -304,7 +283,7 @@ def print_summary(s: Dict[str, Any]) -> None:
 
 # ----- CLI -----
 def main():
-    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly)")
+    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly, no time_epoch parsing)")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
     ap.add_argument("--top", type=int, default=10, help="Top-N entries per category")
     args = ap.parse_args()
@@ -320,4 +299,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
