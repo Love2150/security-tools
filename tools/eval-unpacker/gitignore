@@ -1,0 +1,12 @@
+
+---
+
+# 7) .gitignore
+
+```gitignore
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/

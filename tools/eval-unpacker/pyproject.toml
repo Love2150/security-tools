@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eval-unpacker"
+version = "0.1.0"
+description = "Robust unpacker for eval(function(p,a,c,k,e,d){...})(...) JavaScript packers"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{ name = "Brandon Love" }]
+dependencies = []
+
+[project.optional-dependencies]
+beautify = ["jsbeautifier>=1.15.1"]
+
+[project.urls]
+Homepage = "https://github.com/Love2150/eval-unpacker"
+Issues = "https://github.com/Love2150/eval-unpacker/issues"
+
+[project.scripts]
+eval-unpack = "eval_unpacker.cli:main"
