@@ -120,14 +120,18 @@ def profile_pcap(path: str, top_n_val: int = 10) -> Dict[str, Any]:
         for pkt in cap:
             packet_count += 1
 
-            # time
-            ts = getattr(pkt.frame_info, "time_epoch", None)
-            dt = to_dt(ts)
-            if dt:
-                if first_ts is None or dt < first_ts:
-                    first_ts = dt
-                if last_ts is None or dt > last_ts:
-                    last_ts = dt
+           # time (robust across TShark versions)
+dt = getattr(pkt, "sniff_time", None)  # datetime or None
+if dt:
+    if dt.tzinfo is None:
+        from datetime import timezone
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    if first_ts is None or dt < first_ts:
+        first_ts = dt
+    if last_ts is None or dt > last_ts:
+        last_ts = dt
+
 
             # sizes
             frame_len = safe_int(getattr(pkt.frame_info, "len", "0"))
