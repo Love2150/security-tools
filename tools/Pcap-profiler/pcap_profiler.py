@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly, no time_epoch float parsing)
-# Author: Brandon Love
-# Usage:
-#   python pcap_profiler.py "C:\path\to\capture.pcap" --top 10
+# PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV export)
+# Usage examples (PowerShell):
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --top 10
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --top 10 --decode tcp.port==36050,http
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==8443,tls --json out.json --csv out.csv
 
 from __future__ import annotations
 import argparse
@@ -10,6 +11,8 @@ import os
 import sys
 import shutil
 import asyncio
+import json
+import csv
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -24,8 +27,8 @@ except Exception:
 def ensure_tshark() -> None:
     if shutil.which("tshark") is None:
         print("ERROR: TShark not found on PATH.\n"
-              "Install Wireshark (select 'Install TShark') and add it to your PATH.",
-              file=sys.stderr)
+              "Install Wireshark (select 'Install TShark') and add it to your PATH.\n"
+              "Then restart PowerShell/cmd.", file=sys.stderr)
         sys.exit(1)
 
 # ----- Helpers -----
@@ -40,13 +43,11 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     if not s:
         return None
     s = str(s).strip()
-    # Support trailing 'Z'
     if s.endswith("Z"):
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
         except Exception:
             pass
-    # Native ISO
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -56,7 +57,6 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
         return dt
     except Exception:
         pass
-    # Fallback formats
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
@@ -66,14 +66,12 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
     """Return a tz-aware UTC datetime for a packet WITHOUT touching time_epoch."""
-    # Best: sniff_time from pyshark (datetime or None)
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
             return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
         except Exception:
             pass
-    # Fallback: frame_info.time (string)
     fi = getattr(pkt, "frame_info", None)
     if fi:
         human = getattr(fi, "time", None)
@@ -93,10 +91,10 @@ def fmt_bytes(n: int) -> str:
     return f"{val:.1f} TB"
 
 # ----- Core profiling -----
-def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
+def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = None) -> Dict[str, Any]:
     ensure_tshark()
 
-    # Dedicated asyncio event loop (needed on Windows for pyshark/tshark)
+    # Dedicated asyncio event loop (Windows-safe for pyshark)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -110,8 +108,20 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     dst_ips = Counter()
     dst_ports = Counter()
 
-    # Pass 1: overall scan  (use_json=False to avoid schema weirdness)
-    cap = pyshark.FileCapture(path, keep_packets=False, use_json=False, eventloop=loop)
+    # Build custom -d parameters for tshark
+    custom_params: list[str] = []
+    for m in (decode_maps or []):
+        # expected form: "tcp.port==36050,http" or "tcp.port==8443,tls"
+        custom_params += ["-d", m]
+
+    # Pass 1: overall scan
+    cap = pyshark.FileCapture(
+        path,
+        keep_packets=False,
+        use_json=False,           # avoid schema quirks that caused float errors
+        eventloop=loop,
+        custom_parameters=custom_params
+    )
     try:
         for pkt in cap:
             total_packets += 1
@@ -152,8 +162,14 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         cap.close()
 
     # Pass 2: HTTP
-    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=False,
-                                   display_filter="http", eventloop=loop)
+    http_cap = pyshark.FileCapture(
+        path,
+        keep_packets=False,
+        use_json=False,
+        display_filter="http",
+        eventloop=loop,
+        custom_parameters=custom_params
+    )
     http_hosts = Counter()
     http_uas = Counter()
     http_urls = Counter()
@@ -183,8 +199,14 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         http_cap.close()
 
     # Pass 3: TLS
-    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=False,
-                                  display_filter="tls", eventloop=loop)
+    tls_cap = pyshark.FileCapture(
+        path,
+        keep_packets=False,
+        use_json=False,
+        display_filter="tls",
+        eventloop=loop,
+        custom_parameters=custom_params
+    )
     tls_versions = Counter()
     tls_ciphers = Counter()
     tls_sni = Counter()
@@ -238,15 +260,6 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     }
 
 # ----- Output -----
-def fmt_bytes(n: int) -> str:
-    units = ["B", "KB", "MB", "GB"]
-    val = float(n)
-    for u in units:
-        if val < 1024:
-            return f"{val:.1f} {u}"
-        val /= 1024
-    return f"{val:.1f} TB"
-
 def print_summary(s: Dict[str, Any]) -> None:
     print(f"PCAP Quick Profiler — {s['file']}")
     print("=" * 80)
@@ -281,16 +294,41 @@ def print_summary(s: Dict[str, Any]) -> None:
     show("🔐 TLS SNI", s["tls_sni"])
     show("🔐 TLS JA3", s["tls_ja3"])
 
+def write_json(path: str, data: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+
+def write_csv(path: str, data: Dict[str, Any]) -> None:
+    rows = []
+    for k, v in data["src_ips"]:
+        rows.append({"category": "src_ip", "key": k, "count": v})
+    for k, v in data["dst_ips"]:
+        rows.append({"category": "dst_ip", "key": k, "count": v})
+    for k, v in data["dst_ports"]:
+        rows.append({"category": "dst_port", "key": k, "count": v})
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["category", "key", "count"])
+        w.writeheader()
+        w.writerows(rows)
+
 # ----- CLI -----
 def main():
-    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly, no time_epoch parsing)")
+    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Add --decode for non-standard ports.")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
     ap.add_argument("--top", type=int, default=10, help="Top-N entries per category")
+    ap.add_argument("--decode", action="append", default=[],
+                    help="Decode-as mappings like tcp.port==36050,http (repeatable)")
+    ap.add_argument("--json", help="Write full summary to JSON file")
+    ap.add_argument("--csv", help="Write a flat CSV of top IPs/ports to this path")
     args = ap.parse_args()
 
     try:
-        result = profile_pcap(args.pcap, args.top)
+        result = profile_pcap(args.pcap, args.top, args.decode)
         print_summary(result)
+        if args.json:
+            write_json(args.json, result)
+        if args.csv:
+            write_csv(args.csv, result)
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.", file=sys.stderr)
     except Exception as e:
