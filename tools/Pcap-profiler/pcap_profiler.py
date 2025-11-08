@@ -50,15 +50,36 @@ def safe_int(s: Any, default: int = 0) -> int:
         return default
 
 
-def to_dt(epoch_like: Any) -> datetime | None:
-    if epoch_like is None:
+from datetime import datetime, timezone
+
+def to_dt(value) -> datetime | None:
+    """
+    Parse either:
+      - epoch-like numbers/strings: 1699470123.123
+      - ISO strings: '2010-07-04T20:24:16' (with/without tz)
+    Return tz-aware UTC datetime, or None.
+    """
+    if value is None:
         return None
+
+    s = str(value).strip()
+    # 1) Try epoch
     try:
-        # PyShark frame_info.time_epoch is a string
-        ts = float(str(epoch_like))
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        return datetime.fromtimestamp(float(s), tz=timezone.utc)
+    except Exception:
+        pass
+
+    # 2) Try ISO 8601
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(tz=timezone.utc)
+        return dt
     except Exception:
         return None
+
 
 
 def top_n(counter: Counter, n: int) -> Iterable[Tuple[str, int]]:
