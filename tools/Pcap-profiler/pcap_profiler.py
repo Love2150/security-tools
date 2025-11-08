@@ -1,38 +1,45 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly, robust time parsing)
-# Usage:
-#   python pcap_profiler.py "C:\path\to\capture.pcap" --top 10
-#   python pcap_profiler.py "capture.pcap" --json out.json
-#   python pcap_profiler.py "capture.pcap" --csv out.csv
+# PCAP Quick Profiler (Windows-friendly, robust time parsing + event loop fix)
 
 from __future__ import annotations
-import argparse
-import csv
-import json
-import os
-import sys
-import shutil
-from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+import argparse, csv, json, os, sys, shutil
+from collections import Counter
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
+import asyncio
 
 # ----- Dependencies check -----
 try:
     import pyshark
-except Exception as e:
+except Exception:
     print("ERROR: pyshark is not installed. Install with: pip install pyshark", file=sys.stderr)
     sys.exit(1)
 
 def ensure_tshark() -> None:
-    # On Windows, Wireshark adds tshark.exe in: C:\Program Files\Wireshark
     if shutil.which("tshark") is None:
         print(
             "ERROR: TShark is not on PATH.\n"
-            "Install Wireshark (check 'Install TShark') and ensure "
-            "C:\\Program Files\\Wireshark is in your PATH.",
+            "Install Wireshark (include TShark) and add "
+            "C:\\Program Files\\Wireshark to PATH.",
             file=sys.stderr
         )
         sys.exit(1)
+
+# ---- Windows event loop helper (fixes 'There is no current event loop') ----
+def ensure_event_loop() -> asyncio.AbstractEventLoop:
+    """
+    Guarantee a running event loop in main thread and return it.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        # If it's closed, make a fresh one
+        if loop.is_closed():
+            raise RuntimeError
+        return loop
+    except Exception:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
 
 # ----- Helpers -----
 def safe_int(x: Any, default: int = 0) -> int:
@@ -43,10 +50,10 @@ def safe_int(x: Any, default: int = 0) -> int:
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
     """
-    Return a tz-aware UTC datetime for a packet, trying (in order):
-      1) pkt.sniff_time (already a datetime)
-      2) frame_info.time_epoch (epoch string/number)
-      3) frame_info.time as ISO-like 'YYYY-mm-ddTHH:MM:SS' or 'YYYY-mm-dd HH:MM:SS'
+    tz-aware UTC datetime for a packet:
+      1) pkt.sniff_time (datetime)
+      2) frame_info.time_epoch (epoch)
+      3) frame_info.time (ISO 'YYYY-mm-ddTHH:MM:SS' or 'YYYY-mm-dd HH:MM:SS')
     """
     dt = getattr(pkt, "sniff_time", None)
     if dt:
@@ -77,11 +84,9 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
 
 def fmt_human_bytes(n: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
-    val = float(n)
-    idx = 0
+    val = float(n); idx = 0
     while val >= 1024 and idx < len(units) - 1:
-        val /= 1024.0
-        idx += 1
+        val /= 1024.0; idx += 1
     return f"{val:.1f} {units[idx]}"
 
 def pct(part: int, whole: int) -> str:
@@ -90,9 +95,10 @@ def pct(part: int, whole: int) -> str:
 # ----- Core profiling -----
 def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
     ensure_tshark()
+    loop = ensure_event_loop()  # <<< ensure loop exists
 
     # First pass (general stats)
-    cap = pyshark.FileCapture(path, keep_packets=False, use_json=True)
+    cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, eventloop=loop)
 
     total_packets = 0
     total_bytes = 0
@@ -109,7 +115,7 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         for pkt in cap:
             total_packets += 1
 
-            # time (bulletproof)
+            # time
             dt = safe_sniff_time(pkt)
             if dt:
                 if first_ts is None or dt < first_ts:
@@ -121,7 +127,7 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
             frame_len = safe_int(getattr(pkt.frame_info, "len", "0"))
             total_bytes += frame_len
 
-            # protocol names
+            # protocol
             hl = getattr(pkt, "highest_layer", None) or "UNKNOWN"
             proto_counter[hl] += 1
             proto_bytes[hl] += frame_len
@@ -131,98 +137,65 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
             if ip:
                 s = getattr(ip, "src", None)
                 d = getattr(ip, "dst", None)
-                if s:
-                    src_ips[s] += 1
-                if d:
-                    dst_ips[d] += 1
+                if s: src_ips[s] += 1
+                if d: dst_ips[d] += 1
 
             # Ports
             tcp = getattr(pkt, "tcp", None)
             udp = getattr(pkt, "udp", None)
             if tcp:
                 p = getattr(tcp, "dstport", None)
-                if p:
-                    dst_ports[str(p)] += 1
+                if p: dst_ports[str(p)] += 1
             elif udp:
                 p = getattr(udp, "dstport", None)
-                if p:
-                    dst_ports[str(p)] += 1
+                if p: dst_ports[str(p)] += 1
     finally:
         cap.close()
 
     # Second pass: HTTP
-    http_hosts = Counter()
-    http_uas = Counter()
-    http_urls = Counter()
-    http_ctypes = Counter()
-
-    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="http")
+    http_hosts = Counter(); http_uas = Counter(); http_urls = Counter(); http_ctypes = Counter()
+    http_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="http", eventloop=loop)
     try:
         for pkt in http_cap:
             http = getattr(pkt, "http", None)
-            if not http:
-                continue
+            if not http: continue
             host = getattr(http, "host", None)
-            if host:
-                http_hosts[host] += 1
+            if host: http_hosts[host] += 1
             ua = getattr(http, "user_agent", None)
-            if ua:
-                http_uas[ua] += 1
-            # URL
+            if ua: http_uas[ua] += 1
             full = getattr(http, "request_full_uri", None)
             if full:
                 http_urls[full] += 1
             else:
                 uri = getattr(http, "request_uri", None)
-                if host and uri:
-                    http_urls[f"http://{host}{uri}"] += 1
+                if host and uri: http_urls[f"http://{host}{uri}"] += 1
             ctype = getattr(http, "content_type", None)
-            if ctype:
-                http_ctypes[ctype] += 1
+            if ctype: http_ctypes[ctype] += 1
     finally:
         http_cap.close()
 
     # Third pass: TLS
-    tls_versions = Counter()
-    tls_ciphers = Counter()
-    tls_sni = Counter()
-    tls_ja3 = Counter()
-
-    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="tls")
+    tls_versions = Counter(); tls_ciphers = Counter(); tls_sni = Counter(); tls_ja3 = Counter()
+    tls_cap = pyshark.FileCapture(path, keep_packets=False, use_json=True, display_filter="tls", eventloop=loop)
     try:
         for pkt in tls_cap:
             tls = getattr(pkt, "tls", None)
-            if not tls:
-                continue
-
-            # versions
+            if not tls: continue
             for fld in ("handshake_version", "record_version"):
                 v = getattr(tls, fld, None)
-                if v:
-                    tls_versions[str(v)] += 1
-
-            # cipher
+                if v: tls_versions[str(v)] += 1
             cs = getattr(tls, "handshake_ciphersuite", None)
-            if cs:
-                tls_ciphers[str(cs)] += 1
-
-            # SNI (server name)
+            if cs: tls_ciphers[str(cs)] += 1
             sni = getattr(tls, "handshake_extensions_server_name", None)
-            if sni:
-                tls_sni[str(sni)] += 1
-
-            # JA3/JA3S (if available in your tshark build)
+            if sni: tls_sni[str(sni)] += 1
             ja3 = getattr(tls, "handshake_ja3", None)
-            if ja3:
-                tls_ja3[str(ja3)] += 1
+            if ja3: tls_ja3[str(ja3)] += 1
             ja3s = getattr(tls, "handshake_ja3s", None)
-            if ja3s:
-                tls_ja3[str(ja3s)] += 1
+            if ja3s: tls_ja3[str(ja3s)] += 1
     finally:
         tls_cap.close()
 
-    # Build summary
-    summary: Dict[str, Any] = {
+    return {
         "file": os.path.abspath(path),
         "packets": total_packets,
         "bytes": total_bytes,
@@ -243,23 +216,25 @@ def profile_pcap(path: str, top_n: int = 10) -> Dict[str, Any]:
         "tls_sni": tls_sni.most_common(top_n),
         "tls_ja3": tls_ja3.most_common(top_n),
     }
-    return summary
 
 # ----- Rendering -----
+def fmt_pct_row(title: str, items, total: int):
+    print(f"\n{title}:")
+    if not items:
+        print("  (none)"); return
+    for name, val in items:
+        print(f"  - {name:<14} {val:<8} ({pct(val, total)})" if total else f"  - {name:<14} {val}")
+
 def print_summary(s: Dict[str, Any], top_n: int) -> None:
     print(f"PCAP Quick Profiler — {s['file']}")
     print("=" * 80)
     print(f"Packets: {s['packets']:,}")
     print(f"Bytes:   {s['bytes']:,}")
-
     if s["start"] and s["end"]:
-        # show UTC; can be adapted to local time if you prefer
         print(f"Start:   {s['start']}")
         print(f"End:     {s['end']}")
     else:
-        print("Start:   None")
-        print("End:     None")
-
+        print("Start:   None"); print("End:     None")
     dur = s["duration_seconds"] or 0.0
     if dur > 0:
         avg = s["bytes"] / dur
@@ -267,41 +242,38 @@ def print_summary(s: Dict[str, Any], top_n: int) -> None:
     else:
         print("Duration: 0.00s    Avg throughput: n/a")
 
-    total_pkts = s["packets"] or 0
     print("\n🖧 Protocols (by packets):")
     if s["protocols"]:
         for name, cnt in s["protocols"]:
-            print(f"  - {name:<14} {cnt:<6} ({pct(cnt, total_pkts)})")
+            print(f"  - {name:<14} {cnt:<6} ({pct(cnt, s['packets'])})")
     else:
         print("  (none)")
 
     print("\n📦 Bytes by protocol:")
     if s["bytes_by_protocol"]:
-        total_b = s["bytes"] or 0
         for name, nbytes in s["bytes_by_protocol"]:
-            print(f"  - {name:<14} {nbytes:<8} ({pct(nbytes, total_b)})")
+            print(f"  - {name:<14} {nbytes:<8} ({pct(nbytes, s['bytes'])})")
     else:
         print("  (none)")
 
-    def _print_counter(title, items):
+    def _list(title, items):
         print(f"\n{title}:")
         if items:
-            for k, v in items:
-                print(f"  - {k}  ({v})")
+            for k, v in items: print(f"  - {k}  ({v})")
         else:
             print("  (none)")
 
-    _print_counter("🌍 Top Source IPs", s["top_src_ips"])
-    _print_counter("🌍 Top Destination IPs", s["top_dst_ips"])
-    _print_counter("🔢 Top Destination Ports", s["top_dst_ports"])
-    _print_counter("🌐 HTTP Hosts", s["http_hosts"])
-    _print_counter("🌐 HTTP User-Agents", s["http_user_agents"])
-    _print_counter("🌐 HTTP URLs", s["http_urls"])
-    _print_counter("📁 HTTP Content Types", s["http_content_types"])
-    _print_counter("🔐 TLS Versions", s["tls_versions"])
-    _print_counter("🔐 TLS Ciphers", s["tls_ciphers"])
-    _print_counter("🔐 TLS SNI", s["tls_sni"])
-    _print_counter("🔐 TLS JA3", s["tls_ja3"])
+    _list("🌍 Top Source IPs", s["top_src_ips"])
+    _list("🌍 Top Destination IPs", s["top_dst_ips"])
+    _list("🔢 Top Destination Ports", s["top_dst_ports"])
+    _list("🌐 HTTP Hosts", s["http_hosts"])
+    _list("🌐 HTTP User-Agents", s["http_user_agents"])
+    _list("🌐 HTTP URLs", s["http_urls"])
+    _list("📁 HTTP Content Types", s["http_content_types"])
+    _list("🔐 TLS Versions", s["tls_versions"])
+    _list("🔐 TLS Ciphers", s["tls_ciphers"])
+    _list("🔐 TLS SNI", s["tls_sni"])
+    _list("🔐 TLS JA3", s["tls_ja3"])
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as fh:
@@ -309,40 +281,33 @@ def write_json(path: str, data: Dict[str, Any]) -> None:
     print(f"\n[+] Wrote JSON: {os.path.abspath(path)}")
 
 def write_csv(path: str, data: Dict[str, Any], top_n: int) -> None:
-    """
-    Writes a simple CSV with the headline metrics + top lists flattened into sections.
-    """
-    rows = []
-    rows.append(["file", data["file"]])
-    rows.append(["packets", data["packets"]])
-    rows.append(["bytes", data["bytes"]])
-    rows.append(["start", data["start"] or ""])
-    rows.append(["end", data["end"] or ""])
-    rows.append(["duration_seconds", data["duration_seconds"]])
-
-    def add_section(name, items):
+    rows = [
+        ["file", data["file"]],
+        ["packets", data["packets"]],
+        ["bytes", data["bytes"]],
+        ["start", data["start"] or ""],
+        ["end", data["end"] or ""],
+        ["duration_seconds", data["duration_seconds"]],
+    ]
+    def add(name, items):
         rows.append([name, "value", "count"])
         for k, v in items[:top_n]:
             rows.append(["", k, v])
-
-    add_section("protocols", data["protocols"])
-    add_section("bytes_by_protocol", data["bytes_by_protocol"])
-    add_section("top_src_ips", data["top_src_ips"])
-    add_section("top_dst_ips", data["top_dst_ips"])
-    add_section("top_dst_ports", data["top_dst_ports"])
-    add_section("http_hosts", data["http_hosts"])
-    add_section("http_user_agents", data["http_user_agents"])
-    add_section("http_urls", data["http_urls"])
-    add_section("http_content_types", data["http_content_types"])
-    add_section("tls_versions", data["tls_versions"])
-    add_section("tls_ciphers", data["tls_ciphers"])
-    add_section("tls_sni", data["tls_sni"])
-    add_section("tls_ja3", data["tls_ja3"])
-
+    add("protocols", data["protocols"])
+    add("bytes_by_protocol", data["bytes_by_protocol"])
+    add("top_src_ips", data["top_src_ips"])
+    add("top_dst_ips", data["top_dst_ips"])
+    add("top_dst_ports", data["top_dst_ports"])
+    add("http_hosts", data["http_hosts"])
+    add("http_user_agents", data["http_user_agents"])
+    add("http_urls", data["http_urls"])
+    add("http_content_types", data["http_content_types"])
+    add("tls_versions", data["tls_versions"])
+    add("tls_ciphers", data["tls_ciphers"])
+    add("tls_sni", data["tls_sni"])
+    add("tls_ja3", data["tls_ja3"])
     with open(path, "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        for r in rows:
-            w.writerow(r)
+        csv.writer(fh).writerows(rows)
     print(f"[+] Wrote CSV:  {os.path.abspath(path)}")
 
 # ----- CLI -----
@@ -359,17 +324,12 @@ def main() -> None:
     try:
         summary = profile_pcap(args.pcap, top_n=args.top)
         print_summary(summary, top_n=args.top)
-        if args.json:
-            write_json(args.json, summary)
-        if args.csv:
-            write_csv(args.csv, summary, top_n=args.top)
+        if args.json: write_json(args.json, summary)
+        if args.csv:  write_csv(args.csv, summary, top_n=args.top)
     except KeyboardInterrupt:
-        print("\nInterrupted.", file=sys.stderr)
-        sys.exit(130)
+        print("\nInterrupted.", file=sys.stderr); sys.exit(130)
     except Exception as e:
-        print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"ERROR while profiling PCAP: {e}", file=sys.stderr); sys.exit(1)
 
 if __name__ == "__main__":
     main()
-
