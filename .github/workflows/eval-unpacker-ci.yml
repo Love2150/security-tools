@@ -1,0 +1,28 @@
+name: eval-unpacker CI
+on:
+  push:
+    paths: ['tools/eval-unpacker/**']
+  pull_request:
+    paths: ['tools/eval-unpacker/**']
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('tools/eval-unpacker/pyproject.toml') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install & test
+        working-directory: tools/eval-unpacker
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+          mkdir -p examples
+          echo "eval(function(p,a,c,k,e,d){return p}('abc',10,2,'a|b'))" > examples/sample.js
+          eval-unpack examples/sample.js
+          python -m eval_unpacker.cli examples/sample.js
+          if [ -d tests ]; then pytest -q; else echo "No tests/; skipping."; fi
