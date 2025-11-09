@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV + config profiles)
-# Example (PowerShell):
-#   python .\\pcap_profiler.py "C:\\path\\capture.pcap"
-#   python .\\pcap_profiler.py "C:\\path\\capture.pcap" --profile default
-#   python .\\pcap_profiler.py "C:\\path\\capture.pcap" --decode tcp.port==36050,http
-
-
+# Examples (PowerShell):
+#   python .\pcap_profiler.py "C:\path\capture.pcap"
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --profile default
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==36050,http
 
 from __future__ import annotations
 import argparse
@@ -15,20 +13,18 @@ import shutil
 import asyncio
 import json
 import csv
+from io import StringIO
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 
-# ----- Dependencies -----
 try:
     import pyshark
 except Exception:
     print("ERROR: pyshark not installed. Run: pip install pyshark", file=sys.stderr)
     sys.exit(1)
 
-# =========================
-# Config loading
-# =========================
+# ---------- Config loading ----------
 DEFAULT_CONFIG_LOCATIONS: List[str] = []
 
 def _init_config_locations():
@@ -39,53 +35,36 @@ def _init_config_locations():
     appdata = os.environ.get("APPDATA")
     if appdata:
         DEFAULT_CONFIG_LOCATIONS.append(os.path.join(appdata, "pcap_profiler", "config.json"))
-
 _init_config_locations()
 
 def load_config(explicit_path: Optional[str], profile: Optional[str]) -> Dict[str, Any]:
-    """
-    Loads JSON config from:
-      1) explicit --config path (if provided)
-      2) ./pcap_profiler.config.json
-      3) %APPDATA%\\pcap_profiler\\config.json
-      4) %USERPROFILE%\\.pcap_profiler.json
-    Supports top-level keys and named profiles (cfg['profiles'][name]).
-    """
+    """Load JSON config from common locations; supports named profiles."""
     paths = [explicit_path] if explicit_path else DEFAULT_CONFIG_LOCATIONS
-
     cfg: Dict[str, Any] = {}
     for p in paths:
         try:
-            if os.path.isfile(p):
+            if p and os.path.isfile(p):
                 with open(p, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 break
         except Exception:
             pass
-
-    # Profile overlay if requested or default_profile exists
     prof_name = profile or cfg.get("default_profile")
     if prof_name:
-        profiles = cfg.get("profiles", {}) or {}
+        profiles = cfg.get("profiles", {})
         prof = profiles.get(prof_name, {})
         merged = dict(cfg)
         merged.pop("profiles", None)
         merged.update(prof)
         cfg = merged
-
     return cfg
 
-# =========================
-# Helpers
-# =========================
+# ---------- System helpers ----------
 def ensure_tshark() -> None:
     if shutil.which("tshark") is None:
-        print(
-            "ERROR: TShark not found on PATH.\n"
-            "Install Wireshark (select 'Install TShark') and add it to PATH.\n"
-            "Then restart PowerShell/cmd.",
-            file=sys.stderr,
-        )
+        print("ERROR: TShark not found on PATH.\n"
+              "Install Wireshark (select 'Install TShark') and add it to your PATH.\n"
+              "Then restart PowerShell/cmd.", file=sys.stderr)
         sys.exit(1)
 
 def safe_int(x: Any, default: int = 0) -> int:
@@ -95,17 +74,14 @@ def safe_int(x: Any, default: int = 0) -> int:
         return default
 
 def _parse_iso_utc(s: str) -> Optional[datetime]:
-    """Parse various ISO-ish timestamps into UTC datetimes."""
     if not s:
         return None
     s = str(s).strip()
-    # Common Z form
     if s.endswith("Z"):
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
         except Exception:
             pass
-    # ISO with tz or naive
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -115,7 +91,6 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
         return dt
     except Exception:
         pass
-    # Fallback simple formats
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
@@ -124,10 +99,6 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """
-    Normalize packet sniff time to aware UTC datetime.
-    Works across pyshark/tshark variations.
-    """
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
@@ -145,37 +116,59 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
 
 def fmt_bytes(n: int) -> str:
     units = ["B", "KB", "MB", "GB", "TB"]
-    val = float(max(0, n))
+    val = float(n)
     for u in units:
-        if val < 1024 or u == units[-1]:
+        if val < 1024 or u == "TB":
             return f"{val:.1f} {u}"
         val /= 1024
+    return f"{val:.1f} TB"
 
-def _make_loop() -> asyncio.AbstractEventLoop:
+def find_repo_root(start: str) -> str:
     """
-    Create a fresh event loop safely on Windows & non-Windows.
-    Avoids 'no current event loop' and NotImplementedError for subprocess.
+    Walk up from 'start' to find a repo root. Prefer a folder named 'security-tools',
+    else first parent containing a '.git' folder. Fallback to CWD.
     """
-    # On Windows, Proactor loop supports subprocess since 3.8+
-    if os.name == "nt":
-        try:
-            loop = asyncio.ProactorEventLoop()
-            asyncio.set_event_loop(loop)
-            return loop
-        except Exception:
-            pass
-    # Fallback
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop
+    cur = os.path.abspath(start)
+    while True:
+        name = os.path.basename(cur)
+        if name.lower() == "security-tools":
+            return cur
+        if os.path.isdir(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    return os.getcwd()
 
-# =========================
-# Core profiling
-# =========================
-def profile_pcap(path: str, top_n: int = 10, decode_maps: List[str] | None = None) -> Dict[str, Any]:
+def ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+def make_output_dir(user_outdir: Optional[str]) -> str:
+    if user_outdir:
+        outdir = os.path.abspath(user_outdir)
+    else:
+        # start from script location (works if you run from anywhere)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = find_repo_root(script_dir)
+        outdir = os.path.join(repo_root, "reports", "pcap-profiler")
+    ensure_dir(outdir)
+    return outdir
+
+def timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+def sanitize_basename(name: str) -> str:
+    base = os.path.splitext(os.path.basename(name))[0]
+    # remove characters unsafe for Windows filenames
+    return "".join(ch for ch in base if ch.isalnum() or ch in ("-", "_", ".")) or "capture"
+
+# ---------- Core profiling ----------
+def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = None) -> Dict[str, Any]:
     ensure_tshark()
 
-    loop = _make_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
     total_packets = 0
     total_bytes = 0
@@ -187,7 +180,6 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: List[str] | None = Non
     dst_ips = Counter()
     dst_ports = Counter()
 
-    # tshark -d mappings, e.g. "tcp.port==36050,http"
     custom_params: list[str] = []
     for m in (decode_maps or []):
         custom_params += ["-d", m]
@@ -336,29 +328,27 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: List[str] | None = Non
         "tls_ja3": tls_ja3.most_common(top_n),
     }
 
-# =========================
-# Output
-# =========================
-def print_summary(s: Dict[str, Any]) -> None:
-    print(f"PCAP Quick Profiler — {s['file']}")
-    print("=" * 80)
-    print(f"Packets: {s['packets']:,}")
-    print(f"Bytes:   {s['bytes']:,}")
-    print(f"Start:   {s['start'] or 'None'}")
-    print(f"End:     {s['end'] or 'None'}")
+# ---------- Output ----------
+def render_summary(s: Dict[str, Any]) -> str:
+    buf = StringIO()
+    print(f"PCAP Quick Profiler — {s['file']}", file=buf)
+    print("=" * 80, file=buf)
+    print(f"Packets: {s['packets']:,}", file=buf)
+    print(f"Bytes:   {s['bytes']:,}", file=buf)
+    print(f"Start:   {s['start'] or 'None'}", file=buf)
+    print(f"End:     {s['end'] or 'None'}", file=buf)
     if s["duration"] and s["duration"] > 0:
         avg = s["bytes"] / s["duration"]
-        print(f"Duration: {s['duration']:.2f}s   Avg throughput: {fmt_bytes(int(avg))}/s")
+        print(f"Duration: {s['duration']:.2f}s   Avg throughput: {fmt_bytes(int(avg))}/s", file=buf)
     else:
-        print("Duration: 0.00s   Avg throughput: n/a")
+        print("Duration: 0.00s   Avg throughput: n/a", file=buf)
 
     def show(title, items):
-        print(f"\n{title}:")
+        print(f"\n{title}:", file=buf)
         if not items:
-            print("  (none)")
-            return
+            print("  (none)", file=buf)
         for k, v in items:
-            print(f"  - {k}  ({v})")
+            print(f"  - {k}  ({v})", file=buf)
 
     show("🖧 Protocols", s["protocols"])
     show("📦 Bytes by protocol", s["bytes_by_protocol"])
@@ -373,6 +363,10 @@ def print_summary(s: Dict[str, Any]) -> None:
     show("🔐 TLS Ciphers", s["tls_ciphers"])
     show("🔐 TLS SNI", s["tls_sni"])
     show("🔐 TLS JA3", s["tls_ja3"])
+    return buf.getvalue()
+
+def print_summary(s: Dict[str, Any]) -> None:
+    print(render_summary(s))
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
@@ -391,9 +385,7 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w.writeheader()
         w.writerows(rows)
 
-# =========================
-# CLI
-# =========================
+# ---------- CLI ----------
 def main():
     ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Supports config + profiles.")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
@@ -404,11 +396,13 @@ def main():
     ap.add_argument("--csv", help="Write a flat CSV of top IPs/ports to this path")
     ap.add_argument("--config", help="Path to config JSON (optional)")
     ap.add_argument("--profile", help="Profile name from config (optional)")
+    ap.add_argument("--outdir", help="Directory to save autosaved reports (overrides default)")
+    ap.add_argument("--no-autosave", action="store_true", help="Disable autosave to reports folder")
     args = ap.parse_args()
 
     cfg = load_config(args.config, args.profile)
-
     effective_top = args.top if args.top is not None else int(cfg.get("top", 10))
+
     decode_cfg = cfg.get("decode", []) or []
     http_ports = cfg.get("http_ports", []) or []
     tls_ports = cfg.get("tls_ports", []) or []
@@ -416,22 +410,44 @@ def main():
         decode_cfg.append(f"tcp.port=={p},http")
     for p in tls_ports:
         decode_cfg.append(f"tcp.port=={p},tls")
-
-    # CLI decode maps take precedence order-wise
     decode_maps = list(dict.fromkeys(decode_cfg + (args.decode or [])))
 
     try:
         result = profile_pcap(args.pcap, effective_top, decode_maps)
-        print_summary(result)
+
+        # Always print to console
+        summary_txt = render_summary(result)
+        print(summary_txt)
+
+        # Explicit flags still honored
         if args.json:
             write_json(args.json, result)
         if args.csv:
             write_csv(args.csv, result)
+
+        # Autosave bundle (unless disabled)
+        if not args.no_autosave:
+            outdir = make_output_dir(args.outdir)
+            base = sanitize_basename(args.pcap)
+            ts = timestamp()
+            txt_path = os.path.join(outdir, f"{base}_{ts}.txt")
+            json_path = os.path.join(outdir, f"{base}_{ts}.json")
+            csv_path = os.path.join(outdir, f"{base}_{ts}.csv")
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(summary_txt)
+            write_json(json_path, result)
+            write_csv(csv_path, result)
+            print(f"\nSaved reports:\n  {txt_path}\n  {json_path}\n  {csv_path}")
+
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.", file=sys.stderr)
     except Exception as e:
         print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+
 
 if __name__ == "__main__":
     main()
