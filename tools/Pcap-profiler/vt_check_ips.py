@@ -156,6 +156,77 @@ def print_table(rows: List[Dict[str, str]]) -> None:
     for r in rows:
         print(f"{r['ip'].ljust(ip_w)}  {r['label'].ljust(lab_w)}  {str(r['malicious_count']).rjust(3)}    {r['vt_link']}")
 
+# Markdown summary 
+from pathlib import Path
+
+def _md_escape(s: str) -> str:
+    return str(s).replace("|", r"\|")
+
+def render_summary_markdown(results: dict, source_report_name: str) -> str:
+    ok, err = {}, {}
+    for ip, info in results.items():
+        (err if "error" in info else ok)[ip] = info
+
+    def as_int(x, default=0):
+        try:
+            return int(x)
+        except Exception:
+            return default
+
+    lines = []
+    lines.append(f"# VirusTotal Check — {source_report_name}")
+    lines.append("")
+    lines.append(f"- **Scanned IPs:** {len(results)}")
+    lines.append(f"- **OK:** {len(ok)}")
+    lines.append(f"- **Errors:** {len(err)}")
+    lines.append("")
+    # Table of flagged (descending)
+    flagged = sorted(
+        ((ip, info) for ip, info in ok.items() if as_int(info.get("positives", 0)) > 0),
+        key=lambda t: as_int(t[1].get("positives", 0)),
+        reverse=True
+    )
+    if flagged:
+        lines.append("## IPs Flagged by Engines")
+        lines.append("")
+        lines.append("| IP | Positives | Harmless | Suspicious | Malicious | Undetected | Link |")
+        lines.append("|---|---:|---:|---:|---:|---:|---|")
+        for ip, info in flagged:
+            stats = info.get("last_analysis_stats", {}) or {}
+            lines.append(
+                f"| `{_md_escape(ip)}` | {as_int(info.get('positives', 0))} | "
+                f"{as_int(stats.get('harmless', 0))} | {as_int(stats.get('suspicious', 0))} | "
+                f"{as_int(stats.get('malicious', 0))} | {as_int(stats.get('undetected', 0))} | "
+                f"[Open]({_md_escape(info.get('link', ''))}) |"
+            )
+        lines.append("")
+    else:
+        lines.append("## IPs Flagged by Engines")
+        lines.append("")
+        lines.append("_No IPs were flagged by VirusTotal engines._")
+        lines.append("")
+
+    # Errors (rate-limit, not found, etc.)
+    if err:
+        lines.append("## Errors")
+        lines.append("")
+        lines.append("| IP | Error |")
+        lines.append("|---|---|")
+        for ip, info in err.items():
+            lines.append(f"| `{_md_escape(ip)}` | {_md_escape(info.get('error',''))} |")
+        lines.append("")
+
+    # Appendix: all OK (no detections)
+    clean = [ip for ip, info in ok.items() if as_int(info.get("positives", 0)) == 0]
+    if clean:
+        lines.append("## Clean IPs (0 detections)")
+        lines.append("")
+        lines.append(", ".join(f"`{ip}`" for ip in sorted(clean)))
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 
 # ---------------- main ----------------
 
@@ -169,7 +240,6 @@ def main():
         ap.error("Provide either --json path or --latest.")
 
     if args.latest:
-        # Find latest profiler report
         base_dir = Path(__file__).resolve().parents[1] / "reports" / "pcap-profiler"
         jsons = sorted(base_dir.glob("*.json"), key=os.path.getmtime, reverse=True)
         if not jsons:
@@ -179,6 +249,9 @@ def main():
         print(f"[+] Using latest profiler report: {report_path}")
     else:
         report_path = Path(args.json)
+        if not report_path.exists():
+            print(f"ERROR: file not found: {report_path}", file=sys.stderr)
+            sys.exit(1)
 
     ips = ip_set_from_profiler_json(str(report_path))
     if not ips:
@@ -194,22 +267,32 @@ def main():
     print(f"[+] Checking {len(ips)} IPs against VirusTotal...")
     results = run_vt_checks(ips, vt_key)
 
-    # ✅ Automatically save results
+    # Save to repo: security-tools/reports/vt/
     reports_dir = Path(__file__).resolve().parents[1] / "reports" / "vt"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = reports_dir / f"{report_path.stem}_viruscheck.json"
-    with open(output_path, "w", encoding="utf-8") as f:
+    stem = report_path.stem  # e.g., capture_2025-11-08_1203
+    json_out = reports_dir / f"{stem}_viruscheck.json"
+    md_out   = reports_dir / f"{stem}_viruscheck.md"
+
+    with open(json_out, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
-    print(f"\n✅ Results saved to: {output_path}")
+    md = render_summary_markdown(results, stem)
+    with open(md_out, "w", encoding="utf-8") as f:
+        f.write(md)
+
+    print(f"\n✅ Results saved:")
+    print(f"  • JSON: {json_out}")
+    print(f"  • Markdown: {md_out}")
+
+    # Quick terminal summary
     print("\n--- Summary ---")
     for ip, info in results.items():
         if "error" in info:
             print(f"❌ {ip}: {info['error']}")
         else:
-            positives = info.get("positives", "N/A")
-            print(f"🧩 {ip} → {positives} engines flagged this IP")
+            print(f"🧩 {ip} → {info.get('positives', 'N/A')} engines flagged this IP")
 
 
 
