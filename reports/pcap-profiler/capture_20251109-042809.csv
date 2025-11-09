@@ -1,0 +1,15 @@
+category,key,count
+src_ip,172.16.0.8,1994
+src_ip,64.13.134.52,17
+dst_ip,64.13.134.52,1994
+dst_ip,172.16.0.8,17
+dst_port,36050,16
+dst_port,443,2
+dst_port,143,2
+dst_port,3306,2
+dst_port,199,2
+dst_port,111,2
+dst_port,1025,2
+dst_port,995,2
+dst_port,587,2
+dst_port,5900,2
