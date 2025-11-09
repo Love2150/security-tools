@@ -1,0 +1,26 @@
+{
+  "172.16.0.8": {
+    "ip": "172.16.0.8",
+    "positives": 0,
+    "last_analysis_stats": {
+      "malicious": 0,
+      "suspicious": 0,
+      "undetected": 33,
+      "harmless": 62,
+      "timeout": 0
+    },
+    "link": "https://www.virustotal.com/gui/ip-address/172.16.0.8"
+  },
+  "64.13.134.52": {
+    "ip": "64.13.134.52",
+    "positives": 0,
+    "last_analysis_stats": {
+      "malicious": 0,
+      "suspicious": 0,
+      "undetected": 33,
+      "harmless": 62,
+      "timeout": 0
+    },
+    "link": "https://www.virustotal.com/gui/ip-address/64.13.134.52"
+  }
+}
