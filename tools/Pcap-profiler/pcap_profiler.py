@@ -416,7 +416,7 @@ def default_reports_dir() -> Path:
     return <repo_root>/reports/pcap-profiler.
     Fallback to CWD/reports/pcap-profiler if resolution fails.
     """
-        try:
+    try:
         # run the profiler
         result = profile_pcap(args.pcap, effective_top, decode_maps)
 
