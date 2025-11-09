@@ -389,64 +389,53 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
 def main():
     ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Supports config + profiles.")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
-    ap.add_argument("--top", type=int, help="Top-N entries per category (overrides config)")
+    ap.add_argument("--top", type=int, help="Top-N entries per category (overrides config). Use 0 for ALL.")
+    ap.add_argument("--all", action="store_true",
+                    help="Return ALL IPs/ports (equivalent to --top 0).")
     ap.add_argument("--decode", action="append", default=[],
                     help="Decode-as mapping like tcp.port==36050,http (repeatable; merges with config)")
     ap.add_argument("--json", help="Write full summary to JSON file")
     ap.add_argument("--csv", help="Write a flat CSV of top IPs/ports to this path")
     ap.add_argument("--config", help="Path to config JSON (optional)")
     ap.add_argument("--profile", help="Profile name from config (optional)")
-    ap.add_argument("--outdir", help="Directory to save autosaved reports (overrides default)")
-    ap.add_argument("--no-autosave", action="store_true", help="Disable autosave to reports folder")
     args = ap.parse_args()
 
+    # Merge config
     cfg = load_config(args.config, args.profile)
-    effective_top = args.top if args.top is not None else int(cfg.get("top", 10))
+
+    # Effective settings: CLI overrides config
+    # If --all is set, or --top 0 is provided, treat as "all"
+    if args.all:
+        effective_top = 0
+    elif args.top is not None:
+        effective_top = args.top
+    else:
+        effective_top = int(cfg.get("top", 10))
 
     decode_cfg = cfg.get("decode", []) or []
+    # Expand http_ports/tls_ports into decode rules
     http_ports = cfg.get("http_ports", []) or []
     tls_ports = cfg.get("tls_ports", []) or []
     for p in http_ports:
         decode_cfg.append(f"tcp.port=={p},http")
     for p in tls_ports:
         decode_cfg.append(f"tcp.port=={p},tls")
+
+    # Merge CLI --decode after config (CLI wins if duplicates)
     decode_maps = list(dict.fromkeys(decode_cfg + (args.decode or [])))
 
     try:
         result = profile_pcap(args.pcap, effective_top, decode_maps)
-
-        # Always print to console
-        summary_txt = render_summary(result)
-        print(summary_txt)
-
-        # Explicit flags still honored
+        print_summary(result)
         if args.json:
             write_json(args.json, result)
         if args.csv:
             write_csv(args.csv, result)
-
-        # Autosave bundle (unless disabled)
-        if not args.no_autosave:
-            outdir = make_output_dir(args.outdir)
-            base = sanitize_basename(args.pcap)
-            ts = timestamp()
-            txt_path = os.path.join(outdir, f"{base}_{ts}.txt")
-            json_path = os.path.join(outdir, f"{base}_{ts}.json")
-            csv_path = os.path.join(outdir, f"{base}_{ts}.csv")
-            with open(txt_path, "w", encoding="utf-8") as f:
-                f.write(summary_txt)
-            write_json(json_path, result)
-            write_csv(csv_path, result)
-            print(f"\nSaved reports:\n  {txt_path}\n  {json_path}\n  {csv_path}")
-
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.", file=sys.stderr)
     except Exception as e:
         print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
         sys.exit(1)
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":
