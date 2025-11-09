@@ -1,291 +1,233 @@
 #!/usr/bin/env python3
 """
-VirusTotal IP reputation checker
+VirusTotal checker for IPs found in PCAP Quick Profiler JSON output.
 
-Sources of IPs:
-  1) JSON summary produced by your PCAP Quick Profiler (--json path)
-  2) A raw PCAP/PCAPNG (--pcap path) by extracting unique IPs via tshark
+Usage (PowerShell / cmd):
+  # Check the newest profiler JSON automatically
+  python vt_check_ips.py --latest
 
-Usage (examples):
-  # From your profiler JSON report
-  python vt_check_ips.py --json C:\\path\\to\\reports\\pcap-profiler\\capture_2025-11-08_1203.json
+  # Or specify a JSON file explicitly
+  python vt_check_ips.py --json "C:\\path\\to\\reports\\pcap-profiler\\capture_YYYY-MM-DD_HHMM.json"
 
-  # Extract IPs directly from a PCAP (requires tshark on PATH)
-  python vt_check_ips.py --pcap C:\\path\\capture.pcap
+  # Optional: write a CSV of results (path will be created if missing)
+  python vt_check_ips.py --latest --out "reports/vt/vt_results.csv"
 
-  # Include RFC1918/private IPs too
-  python vt_check_ips.py --pcap C:\\path\\capture.pcap --include-private
-
-  # Limit checks to 40 IPs and save to a specific folder
-  python vt_check_ips.py --json report.json --limit 40 --outdir reports\vt-ip-check
+Requirements:
+  - Environment variable VT_API_KEY must be set:
+      PowerShell:  setx VT_API_KEY "<your_api_key>"
+      cmd:         setx VT_API_KEY "<your_api_key>"
+    (Close and reopen your terminal after setting.)
 """
 
+from __future__ import annotations
 import argparse
 import csv
-import ipaddress
 import json
 import os
 import sys
 import time
-import datetime as dt
-import subprocess
-from typing import Dict, Set, List, Any, Optional
+from pathlib import Path
+from typing import Dict, List, Set, Tuple, Optional
 
-import urllib.request
-import urllib.error
+try:
+    import requests
+except ImportError:
+    print("ERROR: 'requests' not installed. Run: pip install requests", file=sys.stderr)
+    sys.exit(1)
 
-VT_API_URL = "https://www.virustotal.com/api/v3/ip_addresses/{ip}"
-# Free API rate limit is ~4 requests/minute; we’ll be polite.
-DEFAULT_SLEEP_SECONDS = 16
 
-# ------------------------ Helpers ------------------------
+# ---------------- paths / discovery ----------------
 
-def load_env_api_key() -> str:
-    key = os.environ.get("VT_API_KEY") or os.environ.get("VIRUSTOTAL_API_KEY")
+def repo_root_from_here() -> Path:
+    """Assume this script lives in tools/Pcap-profiler; repo root is 2 levels up."""
+    return Path(__file__).resolve().parents[2]
+
+def profiler_reports_dir() -> Path:
+    """Return <repo_root>/reports/pcap-profiler."""
+    return repo_root_from_here() / "reports" / "pcap-profiler"
+
+def latest_profiler_json() -> Optional[Path]:
+    """Find newest *.json under reports/pcap-profiler."""
+    base = profiler_reports_dir()
+    if not base.is_dir():
+        return None
+    files = sorted(base.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else None
+
+
+# ---------------- input helpers ----------------
+
+def ip_set_from_profiler_json(path: str | Path) -> Set[str]:
+    """Read PCAP Quick Profiler JSON and return a unique set of IPs (src + dst)."""
+    p = Path(path)
+    with open(p, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    ips: Set[str] = set()
+    for key in ("src_ips", "dst_ips"):
+        for item in data.get(key, []):
+            # item like ["1.2.3.4", 17] or ["1.2.3.4", "17"]
+            if isinstance(item, (list, tuple)) and item:
+                ip = str(item[0]).strip()
+                if ip:
+                    ips.add(ip)
+    return ips
+
+
+# ---------------- VirusTotal client ----------------
+
+VT_BASE = "https://www.virustotal.com/api/v3"
+VT_SLEEP_SECONDS = 16  # gentle pacing for free-tier (4 req/minute)
+
+def vt_api_key() -> str:
+    key = os.environ.get("VT_API_KEY", "").strip()
     if not key:
-        raise SystemExit(
-            "ERROR: VirusTotal API key not found.\n"
+        raise RuntimeError(
+            "VirusTotal API key not found.\n"
             "Set an environment variable, e.g. (PowerShell):\n"
             "  setx VT_API_KEY \"<your_api_key>\"\n"
             "Then open a NEW terminal and re-run."
         )
     return key
 
-def is_public_ip(ip: str) -> bool:
-    try:
-        return ipaddress.ip_address(ip).is_global
-    except ValueError:
-        return False
+def vt_ip_report(ip: str, api_key: str) -> Dict:
+    """Fetch IP intelligence from VirusTotal v3."""
+    url = f"{VT_BASE}/ip_addresses/{ip}"
+    headers = {"x-apikey": api_key}
+    r = requests.get(url, headers=headers, timeout=30)
+    # Handle rate limits & server errors with a simple retry
+    if r.status_code == 429:
+        time.sleep(VT_SLEEP_SECONDS + 2)
+        r = requests.get(url, headers=headers, timeout=30)
+    r.raise_for_status()
+    return r.json()
 
-def ensure_outdir(outdir: str) -> str:
-    os.makedirs(outdir, exist_ok=True)
-    return outdir
+def classify_vt_stats(rep: Dict) -> Tuple[str, int]:
+    """
+    Return (label, malicious_count) based on last_analysis_stats.
+    Labels: 'malicious', 'suspicious', 'harmless', 'undetected', 'timeout'
+    """
+    stats = rep.get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+    mal = int(stats.get("malicious", 0) or 0)
+    susp = int(stats.get("suspicious", 0) or 0)
+    harmless = int(stats.get("harmless", 0) or 0)
+    undetected = int(stats.get("undetected", 0) or 0)
+    timeout = int(stats.get("timeout", 0) or 0)
 
-def http_get(url: str, headers: Dict[str, str], timeout: int = 30) -> Dict[str, Any]:
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as e:
-        payload = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {e.code}: {payload[:300]}")
-    except Exception as e:
-        raise RuntimeError(str(e))
+    if mal > 0:
+        return ("malicious", mal)
+    if susp > 0:
+        return ("suspicious", susp)
+    if harmless > 0 and mal == 0 and susp == 0:
+        return ("harmless", 0)
+    if undetected > 0:
+        return ("undetected", 0)
+    if timeout > 0:
+        return ("timeout", 0)
+    return ("unknown", 0)
 
-def vt_lookup_ip(ip: str, api_key: str) -> Dict[str, Any]:
-    url = VT_API_URL.format(ip=ip)
-    headers = {"x-apikey": api_key, "Accept": "application/json"}
-    return http_get(url, headers)
 
-def now_stamp() -> str:
-    return dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
+# ---------------- output helpers ----------------
 
-# ------------------------ IP Collection ------------------------
+def ensure_parent_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-def ip_set_from_profiler_json(path: str) -> Set[str]:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    ips: Set[str] = set()
-    for k in ("src_ips", "dst_ips"):
-        for ip, _count in data.get(k, []):
-            ips.add(ip)
-    return ips
-
-def ip_set_from_pcap(path: str) -> Set[str]:
-    # Requires tshark on PATH
-    if not shutil_which("tshark"):
-        raise SystemExit("ERROR: tshark not found on PATH. Install Wireshark and add tshark to PATH.")
-    # Extract all ip.addr (both src & dst) as a flat list, one per line
-    cmd = [
-        "tshark", "-r", path, "-T", "fields", "-e", "ip.addr", "-Y", "ip"
-    ]
-    try:
-        out = subprocess.check_output(cmd, stderr=subprocess.DEVNULL)
-    except subprocess.CalledProcessError as e:
-        raise SystemExit(f"tshark failed: {e}")
-
-    ips: Set[str] = set()
-    for line in out.decode("utf-8", errors="ignore").splitlines():
-        # ip.addr may contain multiple semicolon-separated values in a single row
-        for part in line.replace(",", ";").split(";"):
-            p = part.strip()
-            if p:
-                ips.add(p)
-    return ips
-
-def shutil_which(name: str) -> Optional[str]:
-    for p in os.environ.get("PATH", "").split(os.pathsep):
-        candidate = os.path.join(p, name)
-        if os.path.isfile(candidate):
-            return candidate
-        # Windows exe
-        if os.path.isfile(candidate + ".exe"):
-            return candidate + ".exe"
-    return None
-
-# ------------------------ Main Work ------------------------
-
-def check_ips(ips: Set[str], *, include_private: bool, limit: Optional[int], outdir: str,
-              sleep_seconds: int, api_key: str) -> Dict[str, Any]:
-    """Query VirusTotal for each public IP (or private if requested).
-       Returns dict with details and writes CSV/JSON in outdir."""
-    # Filter & limit
-    ordered = sorted(ips)
-    filtered = [ip for ip in ordered if include_private or is_public_ip(ip)]
-    if limit is not None:
-        filtered = filtered[:max(0, limit)]
-
-    results: List[Dict[str, Any]] = []
-    cache_path = os.path.join(outdir, "cache_ip_vt.json")
-    cache: Dict[str, Any] = {}
-    if os.path.isfile(cache_path):
-        try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cache = json.load(f)
-        except Exception:
-            cache = {}
-
-    for i, ip in enumerate(filtered, 1):
-        print(f"[{i}/{len(filtered)}] {ip} …", end="", flush=True)
-
-        if ip in cache:
-            data = cache[ip]
-            print(" cached")
-        else:
-            try:
-                data = vt_lookup_ip(ip, api_key)
-                # Save to cache immediately
-                cache[ip] = data
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump(cache, f)
-                # Rate-limit
-                time.sleep(sleep_seconds)
-                print(" ok")
-            except Exception as e:
-                data = {"error": str(e)}
-                cache[ip] = data
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump(cache, f)
-                print(f" ERROR: {e}")
-
-        # Flatten a few useful fields
-        row = flatten_vt_ip(ip, data)
-        results.append(row)
-
-    # Write outputs
-    stamp = now_stamp()
-    json_out = os.path.join(outdir, f"vt_ip_results_{stamp}.json")
-    csv_out = os.path.join(outdir, f"vt_ip_results_{stamp}.csv")
-
-    with open(json_out, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
-
-    with open(csv_out, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(
-            f,
-            fieldnames=[
-                "ip", "malicious", "suspicious", "harmless", "undetected",
-                "reputation", "last_analysis_date", "country", "asn", "as_owner",
-                "categories", "error"
-            ],
-        )
+def write_csv(path: Path, rows: List[Dict[str, str]]) -> None:
+    ensure_parent_dir(path)
+    if not rows:
+        # write header only so the file exists
+        rows = []
+    fields = ["ip", "label", "malicious_count", "vt_link"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
-        w.writerows(results)
+        for r in rows:
+            w.writerow(r)
 
-    return {
-        "count": len(results),
-        "json": json_out,
-        "csv": csv_out,
-        "skipped_private": len(ordered) - len(filtered) if not include_private else 0
-    }
+def print_table(rows: List[Dict[str, str]]) -> None:
+    if not rows:
+        print("No IPs to query.")
+        return
+    # Simple aligned text table
+    ip_w = max(2, max(len(r["ip"]) for r in rows))
+    lab_w = max(5, max(len(r["label"]) for r in rows))
+    print(f"{'IP'.ljust(ip_w)}  {'Label'.ljust(lab_w)}  Mal VT  Link")
+    print(f"{'-'*ip_w}  {'-'*lab_w}  ------  ----")
+    for r in rows:
+        print(f"{r['ip'].ljust(ip_w)}  {r['label'].ljust(lab_w)}  {str(r['malicious_count']).rjust(3)}    {r['vt_link']}")
 
-def flatten_vt_ip(ip: str, data: Dict[str, Any]) -> Dict[str, Any]:
-    row = {
-        "ip": ip,
-        "malicious": None, "suspicious": None, "harmless": None, "undetected": None,
-        "reputation": None, "last_analysis_date": None,
-        "country": None, "asn": None, "as_owner": None,
-        "categories": None,
-        "error": None,
-    }
-    if "error" in data:
-        row["error"] = data["error"]
-        return row
 
-    try:
-        attr = data["data"]["attributes"]
-        cats = attr.get("categories") or {}
-        stats = attr.get("last_analysis_stats") or {}
-        row.update({
-            "malicious": stats.get("malicious"),
-            "suspicious": stats.get("suspicious"),
-            "harmless": stats.get("harmless"),
-            "undetected": stats.get("undetected"),
-            "reputation": attr.get("reputation"),
-            "last_analysis_date": ts_to_iso(attr.get("last_analysis_date")),
-            "country": attr.get("country"),
-            "asn": attr.get("asn"),
-            "as_owner": attr.get("as_owner"),
-            "categories": ",".join(sorted(cats.keys())) if isinstance(cats, dict) else None,
-        })
-    except Exception as e:
-        row["error"] = f"parse-error: {e}"
-    return row
-
-def ts_to_iso(ts: Any) -> Optional[str]:
-    try:
-        if ts is None:
-            return None
-        return dt.datetime.utcfromtimestamp(int(ts)).isoformat() + "Z"
-    except Exception:
-        return None
-
-# ------------------------ CLI ------------------------
+# ---------------- main ----------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Check IPs against VirusTotal (v3)")
-    src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--json", help="Path to PCAP Quick Profiler JSON report")
-    src.add_argument("--pcap", help="Path to PCAP/PCAPNG (requires tshark on PATH)")
+    ap = argparse.ArgumentParser(description="Check profiler IPs against VirusTotal (v3).")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--json", help="Path to PCAP Profiler JSON report")
+    g.add_argument("--latest", action="store_true", help="Use the newest JSON under reports/pcap-profiler")
 
-    ap.add_argument("--include-private", action="store_true",
-                    help="Include RFC1918/non-global IPs (default: skip)")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="Max IPs to check (default: all)")
-    ap.add_argument("--sleep", type=int, default=DEFAULT_SLEEP_SECONDS,
-                    help=f"Seconds to sleep between requests (default {DEFAULT_SLEEP_SECONDS})")
-    ap.add_argument("--outdir", default=os.path.join("reports", "vt-ip-check"),
-                    help="Output directory for results")
+    ap.add_argument("--out", help="Optional CSV output path (e.g., reports/vt/vt_results.csv)")
+    ap.add_argument("--sleep", type=int, default=VT_SLEEP_SECONDS, help="Seconds to sleep between VT calls (default: 16)")
     args = ap.parse_args()
 
-    api_key = load_env_api_key()
-    outdir = ensure_outdir(args.outdir)
-
-    # Collect IPs
-    if args.json:
-        ips = ip_set_from_profiler_json(args.json)
+    # Find JSON report
+    if args.latest:
+        last = latest_profiler_json()
+        if not last or not last.exists():
+            print("ERROR: No profiler JSON found under: "
+                  f"{profiler_reports_dir()}", file=sys.stderr)
+            sys.exit(1)
+        json_path = last
     else:
-        ips = ip_set_from_pcap(args.pcap)
+        json_path = Path(args.json)
 
+    if not json_path.exists():
+        print(f"ERROR: JSON not found: {json_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Collect IPs from profiler output
+    ips = sorted(ip_set_from_profiler_json(json_path))
     if not ips:
-        print("No IPs found.", file=sys.stderr)
-        sys.exit(2)
+        print(f"No IPs found in {json_path}.", file=sys.stderr)
+        sys.exit(0)
 
-    summary = check_ips(
-        ips,
-        include_private=args.include_private,
-        limit=args.limit,
-        outdir=outdir,
-        sleep_seconds=int(args.sleep),
-        api_key=api_key,
-    )
+    # API key
+    try:
+        key = vt_api_key()
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    print("\nDone.")
-    print(f"IPs checked: {summary['count']}")
-    if summary.get("skipped_private"):
-        print(f"Private/non-global IPs skipped: {summary['skipped_private']}")
-    print(f"JSON: {summary['json']}")
-    print(f"CSV : {summary['csv']}")
+    results: List[Dict[str, str]] = []
+    print(f"Scanning {len(ips)} IP(s) via VirusTotal…")
+    for i, ip in enumerate(ips, start=1):
+        try:
+            rep = vt_ip_report(ip, key)
+            label, mal = classify_vt_stats(rep)
+            link = f"https://www.virustotal.com/gui/ip-address/{ip}"
+            results.append({
+                "ip": ip,
+                "label": label,
+                "malicious_count": str(mal),
+                "vt_link": link,
+            })
+            # Gentle pacing for VT free-tier
+            if i < len(ips):
+                time.sleep(max(0, args.sleep))
+        except requests.HTTPError as he:
+            code = getattr(he.response, "status_code", "HTTP")
+            print(f"[!] VT HTTP error for {ip}: {code}", file=sys.stderr)
+        except Exception as e:
+            print(f"[!] VT error for {ip}: {e}", file=sys.stderr)
+
+    # Print table
+    print()
+    print_table(results)
+
+    # Optional CSV
+    if args.out:
+        out_path = Path(args.out)
+        write_csv(out_path, results)
+        print(f"\nCSV written to: {out_path.resolve()}")
 
 if __name__ == "__main__":
     main()
