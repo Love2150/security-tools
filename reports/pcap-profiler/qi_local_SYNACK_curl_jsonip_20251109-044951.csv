@@ -1,7 +1,0 @@
-category,key,count
-src_ip,10.0.1.4,7
-src_ip,96.126.98.124,6
-dst_ip,96.126.98.124,7
-dst_ip,10.0.1.4,6
-dst_port,80,7
-dst_port,56524,6
