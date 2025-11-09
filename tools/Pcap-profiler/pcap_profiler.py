@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV + config profiles)
-# Examples (PowerShell):
-#   python .\pcap_profiler.py "C:\path\capture.pcap"
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --profile default
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==36050,http
+# Example (PowerShell):
+#   python .\pcap_profiler.py r"C:\path\capture.pcap"
+#   python .\pcap_profiler.py r"C:\path\capture.pcap" --profile default
+#   python .\pcap_profiler.py r"C:\path\capture.pcap" --decode tcp.port==36050,http
+
 
 from __future__ import annotations
 import argparse
