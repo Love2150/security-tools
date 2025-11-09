@@ -306,6 +306,14 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
 
     dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
+        # helper: most_common with "all" support
+    def mc(counter, n):
+        # Counter.most_common(None) returns all items
+        if n is None or n <= 0:
+            return counter.most_common(None)
+        return counter.most_common(n)
+
+
     return {
         "file": os.path.abspath(path),
         "packets": total_packets,
@@ -313,20 +321,21 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
         "start": first_ts.isoformat() if first_ts else None,
         "end": last_ts.isoformat() if last_ts else None,
         "duration": dur,
-        "protocols": proto_counter.most_common(),
-        "bytes_by_protocol": proto_bytes.most_common(),
-        "src_ips": src_ips.most_common(top_n),
-        "dst_ips": dst_ips.most_common(top_n),
-        "dst_ports": dst_ports.most_common(top_n),
-        "http_hosts": http_hosts.most_common(top_n),
-        "http_user_agents": http_uas.most_common(top_n),
-        "http_urls": http_urls.most_common(top_n),
-        "http_content_types": http_ctypes.most_common(top_n),
-        "tls_versions": tls_versions.most_common(top_n),
-        "tls_ciphers": tls_ciphers.most_common(top_n),
-        "tls_sni": tls_sni.most_common(top_n),
-        "tls_ja3": tls_ja3.most_common(top_n),
+        "protocols": mc(proto_counter, None),          # all protocols
+        "bytes_by_protocol": mc(proto_bytes, None),    # all protocols by bytes
+        "src_ips": mc(src_ips, top_n),                 # all if top_n<=0
+        "dst_ips": mc(dst_ips, top_n),                 # all if top_n<=0
+        "dst_ports": mc(dst_ports, top_n),             # all if top_n<=0
+        "http_hosts": mc(http_hosts, top_n),
+        "http_user_agents": mc(http_uas, top_n),
+        "http_urls": mc(http_urls, top_n),
+        "http_content_types": mc(http_ctypes, top_n),
+        "tls_versions": mc(tls_versions, top_n),
+        "tls_ciphers": mc(tls_ciphers, top_n),
+        "tls_sni": mc(tls_sni, top_n),
+        "tls_ja3": mc(tls_ja3, top_n),
     }
+
 
 # ---------- Output ----------
 def render_summary(s: Dict[str, Any]) -> str:
