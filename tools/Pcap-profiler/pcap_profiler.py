@@ -47,8 +47,8 @@ def load_config(explicit_path: Optional[str], profile: Optional[str]) -> Dict[st
     Loads JSON config from:
       1) explicit --config path (if provided)
       2) ./pcap_profiler.config.json
-      3) %APPDATA%\pcap_profiler\config.json
-      4) %USERPROFILE%\.pcap_profiler.json
+      3) %APPDATA%\\pcap_profiler\\config.json
+      4) %USERPROFILE%\\.pcap_profiler.json
     Supports top-level keys and named profiles (cfg['profiles'][name]).
     """
     paths = [explicit_path] if explicit_path else DEFAULT_CONFIG_LOCATIONS
