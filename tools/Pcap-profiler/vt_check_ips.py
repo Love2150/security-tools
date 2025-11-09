@@ -4,7 +4,7 @@ VirusTotal checker for IPs produced by the PCAP Quick Profiler.
 
 Usage (PowerShell):
   # check a specific profiler JSON
-  python .\vt_check_ips.py --json "C:\path\to\reports\pcap-profiler\capture.json"
+  python .\vt_check_ips.py --json "C:\\path\\to\\reports\\pcap-profiler\\capture.json"
 
   # or auto-pick the most recent profiler JSON (searches repo-root first)
   python .\vt_check_ips.py --latest
