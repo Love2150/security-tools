@@ -1,0 +1,26 @@
+{
+  "10.0.1.4": {
+    "ip": "10.0.1.4",
+    "positives": 0,
+    "last_analysis_stats": {
+      "malicious": 0,
+      "suspicious": 0,
+      "undetected": 34,
+      "harmless": 61,
+      "timeout": 0
+    },
+    "link": "https://www.virustotal.com/gui/ip-address/10.0.1.4"
+  },
+  "96.126.98.124": {
+    "ip": "96.126.98.124",
+    "positives": 0,
+    "last_analysis_stats": {
+      "malicious": 0,
+      "suspicious": 0,
+      "undetected": 95,
+      "harmless": 0,
+      "timeout": 0
+    },
+    "link": "https://www.virustotal.com/gui/ip-address/96.126.98.124"
+  }
+}
