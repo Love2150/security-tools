@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly, decode-as + JSON/CSV + config profiles)
+# PCAP Quick Profiler (Windows-friendly, auto-save reports, decode-as, config profiles)
 # Examples (PowerShell):
 #   python .\pcap_profiler.py "C:\path\capture.pcap"
-#   python .\pcap_profiler.py "C:\path\capture.pcap" --profile default
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --all
 #   python .\pcap_profiler.py "C:\path\capture.pcap" --decode tcp.port==36050,http
+#   python .\pcap_profiler.py "C:\path\capture.pcap" --outdir "..\..\reports\pcap-profiler"
 
 from __future__ import annotations
 import argparse
@@ -13,10 +14,13 @@ import shutil
 import asyncio
 import json
 import csv
-from io import StringIO
+from pathlib import Path
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
+from typing import Tuple
+import importlib
+
 
 try:
     import pyshark
@@ -30,25 +34,36 @@ DEFAULT_CONFIG_LOCATIONS: List[str] = []
 def _init_config_locations():
     here = os.getcwd()
     DEFAULT_CONFIG_LOCATIONS.append(os.path.join(here, "pcap_profiler.config.json"))
+    # Windows user locations
     home = os.path.expanduser("~")
     DEFAULT_CONFIG_LOCATIONS.append(os.path.join(home, ".pcap_profiler.json"))
     appdata = os.environ.get("APPDATA")
     if appdata:
         DEFAULT_CONFIG_LOCATIONS.append(os.path.join(appdata, "pcap_profiler", "config.json"))
+
 _init_config_locations()
 
 def load_config(explicit_path: Optional[str], profile: Optional[str]) -> Dict[str, Any]:
-    """Load JSON config from common locations; supports named profiles."""
+    """
+    Loads JSON config from:
+      1) explicit --config path (if provided)
+      2) ./pcap_profiler.config.json
+      3) %APPDATA%\\pcap_profiler\\config.json
+      4) %USERPROFILE%\\.pcap_profiler.json
+    Supports top-level keys and named profiles.
+    """
     paths = [explicit_path] if explicit_path else DEFAULT_CONFIG_LOCATIONS
     cfg: Dict[str, Any] = {}
     for p in paths:
         try:
-            if p and os.path.isfile(p):
+            if os.path.isfile(p):
                 with open(p, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 break
         except Exception:
             pass
+
+    # If a profile is requested, merge it on top
     prof_name = profile or cfg.get("default_profile")
     if prof_name:
         profiles = cfg.get("profiles", {})
@@ -57,6 +72,7 @@ def load_config(explicit_path: Optional[str], profile: Optional[str]) -> Dict[st
         merged.pop("profiles", None)
         merged.update(prof)
         cfg = merged
+
     return cfg
 
 # ---------- System helpers ----------
@@ -115,53 +131,13 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
     return None
 
 def fmt_bytes(n: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
+    units = ["B", "KB", "MB", "GB"]
     val = float(n)
     for u in units:
-        if val < 1024 or u == "TB":
+        if val < 1024:
             return f"{val:.1f} {u}"
         val /= 1024
     return f"{val:.1f} TB"
-
-def find_repo_root(start: str) -> str:
-    """
-    Walk up from 'start' to find a repo root. Prefer a folder named 'security-tools',
-    else first parent containing a '.git' folder. Fallback to CWD.
-    """
-    cur = os.path.abspath(start)
-    while True:
-        name = os.path.basename(cur)
-        if name.lower() == "security-tools":
-            return cur
-        if os.path.isdir(os.path.join(cur, ".git")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            break
-        cur = parent
-    return os.getcwd()
-
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
-
-def make_output_dir(user_outdir: Optional[str]) -> str:
-    if user_outdir:
-        outdir = os.path.abspath(user_outdir)
-    else:
-        # start from script location (works if you run from anywhere)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        repo_root = find_repo_root(script_dir)
-        outdir = os.path.join(repo_root, "reports", "pcap-profiler")
-    ensure_dir(outdir)
-    return outdir
-
-def timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-
-def sanitize_basename(name: str) -> str:
-    base = os.path.splitext(os.path.basename(name))[0]
-    # remove characters unsafe for Windows filenames
-    return "".join(ch for ch in base if ch.isalnum() or ch in ("-", "_", ".")) or "capture"
 
 # ---------- Core profiling ----------
 def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = None) -> Dict[str, Any]:
@@ -306,13 +282,11 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
 
     dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
-        # helper: most_common with "all" support
-    def mc(counter, n):
-        # Counter.most_common(None) returns all items
+    # helper: most_common with "all" support
+    def mc(counter: Counter, n: Optional[int]):
         if n is None or n <= 0:
             return counter.most_common(None)
         return counter.most_common(n)
-
 
     return {
         "file": os.path.abspath(path),
@@ -336,50 +310,54 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: list[str] | None = Non
         "tls_ja3": mc(tls_ja3, top_n),
     }
 
-
 # ---------- Output ----------
-def render_summary(s: Dict[str, Any]) -> str:
-    buf = StringIO()
-    print(f"PCAP Quick Profiler — {s['file']}", file=buf)
-    print("=" * 80, file=buf)
-    print(f"Packets: {s['packets']:,}", file=buf)
-    print(f"Bytes:   {s['bytes']:,}", file=buf)
-    print(f"Start:   {s['start'] or 'None'}", file=buf)
-    print(f"End:     {s['end'] or 'None'}", file=buf)
+def render_text_summary(s: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    lines.append(f"PCAP Quick Profiler — {s['file']}")
+    lines.append("=" * 80)
+    lines.append(f"Packets: {s['packets']:,}")
+    lines.append(f"Bytes:   {s['bytes']:,}")
+    lines.append(f"Start:   {s['start'] or 'None'}")
+    lines.append(f"End:     {s['end'] or 'None'}")
     if s["duration"] and s["duration"] > 0:
         avg = s["bytes"] / s["duration"]
-        print(f"Duration: {s['duration']:.2f}s   Avg throughput: {fmt_bytes(int(avg))}/s", file=buf)
+        lines.append(f"Duration: {s['duration']:.2f}s   Avg throughput: {fmt_bytes(int(avg))}/s")
     else:
-        print("Duration: 0.00s   Avg throughput: n/a", file=buf)
+        lines.append("Duration: 0.00s   Avg throughput: n/a")
 
-    def show(title, items):
-        print(f"\n{title}:", file=buf)
+    def block(title: str, items: List[Tuple[str, int]]):
+        lines.append(f"\n{title}:")
         if not items:
-            print("  (none)", file=buf)
+            lines.append("  (none)")
+            return
         for k, v in items:
-            print(f"  - {k}  ({v})", file=buf)
+            lines.append(f"  - {k}  ({v})")
 
-    show("🖧 Protocols", s["protocols"])
-    show("📦 Bytes by protocol", s["bytes_by_protocol"])
-    show("🌍 Top Source IPs", s["src_ips"])
-    show("🌍 Top Destination IPs", s["dst_ips"])
-    show("🔢 Top Destination Ports", s["dst_ports"])
-    show("🌐 HTTP Hosts", s["http_hosts"])
-    show("🌐 HTTP User-Agents", s["http_user_agents"])
-    show("🌐 HTTP URLs", s["http_urls"])
-    show("📁 HTTP Content Types", s["http_content_types"])
-    show("🔐 TLS Versions", s["tls_versions"])
-    show("🔐 TLS Ciphers", s["tls_ciphers"])
-    show("🔐 TLS SNI", s["tls_sni"])
-    show("🔐 TLS JA3", s["tls_ja3"])
-    return buf.getvalue()
+    block("🖧 Protocols", s["protocols"])
+    block("📦 Bytes by protocol", s["bytes_by_protocol"])
+    block("🌍 Top Source IPs", s["src_ips"])
+    block("🌍 Top Destination IPs", s["dst_ips"])
+    block("🔢 Top Destination Ports", s["dst_ports"])
+    block("🌐 HTTP Hosts", s["http_hosts"])
+    block("🌐 HTTP User-Agents", s["http_user_agents"])
+    block("🌐 HTTP URLs", s["http_urls"])
+    block("📁 HTTP Content Types", s["http_content_types"])
+    block("🔐 TLS Versions", s["tls_versions"])
+    block("🔐 TLS Ciphers", s["tls_ciphers"])
+    block("🔐 TLS SNI", s["tls_sni"])
+    block("🔐 TLS JA3", s["tls_ja3"])
+    return "\n".join(lines)
 
 def print_summary(s: Dict[str, Any]) -> None:
-    print(render_summary(s))
+    print(render_text_summary(s))
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+def write_txt(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 def write_csv(path: str, data: Dict[str, Any]) -> None:
     rows = []
@@ -394,26 +372,111 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w.writeheader()
         w.writerows(rows)
 
+def maybe_run_vt_check(profiler_json_path: Path, pcap_path: str, outdir: Optional[str],
+                       force: bool = False, disable: bool = False) -> None:
+    """
+    If VT_API_KEY is set (or --vt used), call vt_check_ips to scan IPs found in the
+    profiler JSON and save results next to the profile reports.
+    """
+    if disable:
+        print("[vt] Skipping VT check (disabled).")
+        return
+
+    api_key = os.environ.get("VT_API_KEY")
+    if not api_key and not force:
+        print("[vt] VT_API_KEY not set; skipping VT check.")
+        return
+
+    try:
+        vt = importlib.import_module("vt_check_ips")
+    except Exception:
+        print("[vt] vt_check_ips.py not found or import failed; skipping VT check.")
+        return
+
+    try:
+        ips = vt.ip_set_from_profiler_json(str(profiler_json_path))
+        if not ips:
+            print("[vt] No IPs found in profiler JSON; nothing to check.")
+            return
+
+        print(f"[vt] Checking {len(ips)} IPs against VirusTotal...")
+        results = vt.run_vt_checks(ips, api_key or "")
+        out_json, out_txt = vt_output_paths(pcap_path, outdir)
+        vt.write_vt_report(str(out_json), str(out_txt), results)
+        print(f"[vt] Saved VT JSON: {out_json}")
+        print(f"[vt] Saved VT TXT : {out_txt}")
+    except Exception as e:
+        print(f"[vt] Error during VT check: {e}", file=sys.stderr)
+
+
+# ---------- Autosave paths ----------
+def default_reports_dir() -> Path:
+    """
+    If this file is at tools/Pcap-profiler/pcap_profiler.py,
+    return <repo_root>/reports/pcap-profiler.
+    Fallback to CWD/reports/pcap-profiler if resolution fails.
+    """
+    try:
+        here = Path(__file__).resolve()
+        repo_root = here.parents[2]  # pcap_profiler.py -> Pcap-profiler -> tools -> repo_root
+        return repo_root / "reports" / "pcap-profiler"
+    except Exception:
+        return Path.cwd() / "reports" / "pcap-profiler"
+
+def output_paths(pcap_path: str, outdir: Optional[str]) -> Tuple[Path, Path, Path]:
+    base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = Path(pcap_path).stem
+    json_path = base_dir / f"{stem}_{ts}.json"
+    txt_path = base_dir / f"{stem}_{ts}.txt"
+    csv_path = base_dir / f"{stem}_{ts}.csv"
+    return json_path, txt_path, csv_path
+
+def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> Tuple[Path, Path]:
+    base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = Path(pcap_path).stem
+    out_json = base_dir / f"{stem}_vt_{ts}.json"
+    out_txt  = base_dir / f"{stem}_vt_{ts}.txt"
+    return out_json, out_txt
+    
+    # Auto-run VirusTotal check (if VT_API_KEY present or --vt is set; unless --no-vt)
+        maybe_run_vt_check(
+            profiler_json_path=json_path,
+            pcap_path=args.pcap,
+            outdir=args.outdir,
+            force=args.vt,
+            disable=args.no_vt
+        )
+
+
 # ---------- CLI ----------
 def main():
-    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Supports config + profiles.")
+    ap = argparse.ArgumentParser(description="PCAP Quick Profiler (Windows-friendly). Auto-saves reports.")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
     ap.add_argument("--top", type=int, help="Top-N entries per category (overrides config). Use 0 for ALL.")
     ap.add_argument("--all", action="store_true",
                     help="Return ALL IPs/ports (equivalent to --top 0).")
     ap.add_argument("--decode", action="append", default=[],
                     help="Decode-as mapping like tcp.port==36050,http (repeatable; merges with config)")
-    ap.add_argument("--json", help="Write full summary to JSON file")
-    ap.add_argument("--csv", help="Write a flat CSV of top IPs/ports to this path")
+    ap.add_argument("--json", help="Additionally write full summary to this JSON file")
+    ap.add_argument("--csv", help="Additionally write a flat CSV to this path (src/dst IPs, ports)")
+    ap.add_argument("--outdir", help="Override auto-save directory (default: <repo>/reports/pcap-profiler)")
     ap.add_argument("--config", help="Path to config JSON (optional)")
     ap.add_argument("--profile", help="Profile name from config (optional)")
+    ap.add_argument("--vt", action="store_true",
+                    help="Force run VirusTotal check (even if VT_API_KEY not set; will still fail without a key).")
+    ap.add_argument("--no-vt", action="store_true",
+                    help="Disable automatic VirusTotal check after profiling.")
+
     args = ap.parse_args()
 
     # Merge config
     cfg = load_config(args.config, args.profile)
 
     # Effective settings: CLI overrides config
-    # If --all is set, or --top 0 is provided, treat as "all"
     if args.all:
         effective_top = 0
     elif args.top is not None:
@@ -422,7 +485,6 @@ def main():
         effective_top = int(cfg.get("top", 10))
 
     decode_cfg = cfg.get("decode", []) or []
-    # Expand http_ports/tls_ports into decode rules
     http_ports = cfg.get("http_ports", []) or []
     tls_ports = cfg.get("tls_ports", []) or []
     for p in http_ports:
@@ -430,24 +492,46 @@ def main():
     for p in tls_ports:
         decode_cfg.append(f"tcp.port=={p},tls")
 
-    # Merge CLI --decode after config (CLI wins if duplicates)
     decode_maps = list(dict.fromkeys(decode_cfg + (args.decode or [])))
+
+    # Where to auto-save
+    json_path, txt_path, csv_path_default = output_paths(args.pcap, args.outdir)
 
     try:
         result = profile_pcap(args.pcap, effective_top, decode_maps)
-        print_summary(result)
-        if args.json:
-            write_json(args.json, result)
+
+        # Always print to console
+        text = render_text_summary(result)
+        print(text)
+
+        # Auto-save JSON + TXT every run
+        write_json(str(json_path), result)
+        write_txt(str(txt_path), text)
+        # Optionally also write CSV (top lists)
+        # Use explicit --csv if you want a specific filename
         if args.csv:
             write_csv(args.csv, result)
+        else:
+            # If top_n > 0 or == 0, a CSV of top IPs/ports can still be handy—save it alongside
+            write_csv(str(csv_path_default), result)
+
+        # Respect explicit --json too (write a second copy where requested)
+        if args.json and Path(args.json).resolve() != json_path.resolve():
+            write_json(args.json, result)
+
+        print(f"\n[autosave] JSON: {json_path}")
+        print(f"[autosave] TXT : {txt_path}")
+        if args.csv:
+            print(f"[manual]  CSV : {Path(args.csv).resolve()}")
+        else:
+            print(f"[autosave] CSV : {csv_path_default}")
+
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.", file=sys.stderr)
     except Exception as e:
         print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
         sys.exit(1)
 
-
 if __name__ == "__main__":
     main()
-
 
