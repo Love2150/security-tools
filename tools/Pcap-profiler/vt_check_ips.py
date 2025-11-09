@@ -8,13 +8,13 @@ Sources of IPs:
 
 Usage (examples):
   # From your profiler JSON report
-  python vt_check_ips.py --json C:\path\to\reports\pcap-profiler\capture_2025-11-08_1203.json
+  python vt_check_ips.py --json C:\\path\\to\\reports\\pcap-profiler\\capture_2025-11-08_1203.json
 
   # Extract IPs directly from a PCAP (requires tshark on PATH)
-  python vt_check_ips.py --pcap C:\path\capture.pcap
+  python vt_check_ips.py --pcap C:\\path\\capture.pcap
 
   # Include RFC1918/private IPs too
-  python vt_check_ips.py --pcap C:\path\capture.pcap --include-private
+  python vt_check_ips.py --pcap C:\\path\\capture.pcap --include-private
 
   # Limit checks to 40 IPs and save to a specific folder
   python vt_check_ips.py --json report.json --limit 40 --outdir reports\vt-ip-check
