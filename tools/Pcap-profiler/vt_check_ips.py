@@ -160,74 +160,58 @@ def print_table(rows: List[Dict[str, str]]) -> None:
 # ---------------- main ----------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Check profiler IPs against VirusTotal (v3).")
-    g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--json", help="Path to PCAP Profiler JSON report")
-    g.add_argument("--latest", action="store_true", help="Use the newest JSON under reports/pcap-profiler")
-
-    ap.add_argument("--out", help="Optional CSV output path (e.g., reports/vt/vt_results.csv)")
-    ap.add_argument("--sleep", type=int, default=VT_SLEEP_SECONDS, help="Seconds to sleep between VT calls (default: 16)")
+    ap = argparse.ArgumentParser(description="Check IPs from PCAP Profiler JSON against VirusTotal.")
+    ap.add_argument("--json", help="Path to pcap_profiler JSON report file.")
+    ap.add_argument("--latest", action="store_true", help="Automatically detect the latest profiler report.")
     args = ap.parse_args()
 
-    # Find JSON report
+    if not (args.json or args.latest):
+        ap.error("Provide either --json path or --latest.")
+
     if args.latest:
-        last = latest_profiler_json()
-        if not last or not last.exists():
-            print("ERROR: No profiler JSON found under: "
-                  f"{profiler_reports_dir()}", file=sys.stderr)
+        # Find latest profiler report
+        base_dir = Path(__file__).resolve().parents[1] / "reports" / "pcap-profiler"
+        jsons = sorted(base_dir.glob("*.json"), key=os.path.getmtime, reverse=True)
+        if not jsons:
+            print("No profiler reports found.", file=sys.stderr)
             sys.exit(1)
-        json_path = last
+        report_path = jsons[0]
+        print(f"[+] Using latest profiler report: {report_path}")
     else:
-        json_path = Path(args.json)
+        report_path = Path(args.json)
 
-    if not json_path.exists():
-        print(f"ERROR: JSON not found: {json_path}", file=sys.stderr)
-        sys.exit(1)
-
-    # Collect IPs from profiler output
-    ips = sorted(ip_set_from_profiler_json(json_path))
+    ips = ip_set_from_profiler_json(str(report_path))
     if not ips:
-        print(f"No IPs found in {json_path}.", file=sys.stderr)
-        sys.exit(0)
+        print("No IPs found in profiler JSON.")
+        return
 
-    # API key
-    try:
-        key = vt_api_key()
-    except RuntimeError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+    vt_key = os.getenv("VT_API_KEY")
+    if not vt_key:
+        print("ERROR: VirusTotal API key not found. Set it using:")
+        print('  setx VT_API_KEY "<your_api_key>"')
         sys.exit(1)
 
-    results: List[Dict[str, str]] = []
-    print(f"Scanning {len(ips)} IP(s) via VirusTotal…")
-    for i, ip in enumerate(ips, start=1):
-        try:
-            rep = vt_ip_report(ip, key)
-            label, mal = classify_vt_stats(rep)
-            link = f"https://www.virustotal.com/gui/ip-address/{ip}"
-            results.append({
-                "ip": ip,
-                "label": label,
-                "malicious_count": str(mal),
-                "vt_link": link,
-            })
-            # Gentle pacing for VT free-tier
-            if i < len(ips):
-                time.sleep(max(0, args.sleep))
-        except requests.HTTPError as he:
-            code = getattr(he.response, "status_code", "HTTP")
-            print(f"[!] VT HTTP error for {ip}: {code}", file=sys.stderr)
-        except Exception as e:
-            print(f"[!] VT error for {ip}: {e}", file=sys.stderr)
+    print(f"[+] Checking {len(ips)} IPs against VirusTotal...")
+    results = run_vt_checks(ips, vt_key)
 
-    # Print table
-    print()
-    print_table(results)
+    # ✅ Automatically save results
+    reports_dir = Path(__file__).resolve().parents[1] / "reports" / "vt"
+    reports_dir.mkdir(parents=True, exist_ok=True)
 
-    # Optional CSV
-    if args.out:
-        out_path = Path(args.out)
-        write_csv(out_path, results)
-        print(f"\nCSV written to: {out_path.resolve()}")
+    output_path = reports_dir / f"{report_path.stem}_viruscheck.json"
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
+
+    print(f"\n✅ Results saved to: {output_path}")
+    print("\n--- Summary ---")
+    for ip, info in results.items():
+        if "error" in info:
+            print(f"❌ {ip}: {info['error']}")
+        else:
+            positives = info.get("positives", "N/A")
+            print(f"🧩 {ip} → {positives} engines flagged this IP")
+
+
 
 if __name__ == "__main__":
     main()
