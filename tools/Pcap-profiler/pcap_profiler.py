@@ -416,40 +416,54 @@ def default_reports_dir() -> Path:
     return <repo_root>/reports/pcap-profiler.
     Fallback to CWD/reports/pcap-profiler if resolution fails.
     """
-    try:
-        here = Path(__file__).resolve()
-        repo_root = here.parents[2]  # pcap_profiler.py -> Pcap-profiler -> tools -> repo_root
-        return repo_root / "reports" / "pcap-profiler"
-    except Exception:
-        return Path.cwd() / "reports" / "pcap-profiler"
+        try:
+        # run the profiler
+        result = profile_pcap(args.pcap, effective_top, decode_maps)
 
-def output_paths(pcap_path: str, outdir: Optional[str]) -> Tuple[Path, Path, Path]:
-    base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
-    base_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    stem = Path(pcap_path).stem
-    json_path = base_dir / f"{stem}_{ts}.json"
-    txt_path = base_dir / f"{stem}_{ts}.txt"
-    csv_path = base_dir / f"{stem}_{ts}.csv"
-    return json_path, txt_path, csv_path
+        # print human summary
+        print_summary(result)
 
-def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> Tuple[Path, Path]:
-    base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
-    base_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    stem = Path(pcap_path).stem
-    out_json = base_dir / f"{stem}_vt_{ts}.json"
-    out_txt  = base_dir / f"{stem}_vt_{ts}.txt"
-    return out_json, out_txt
-    
-    # Auto-run VirusTotal check (if VT_API_KEY present or --vt is set; unless --no-vt)
+        # ---------- autosave reports ----------
+        out_json, out_txt, out_csv = output_paths(args.pcap, args.outdir)
+
+        # always write JSON + TXT summary
+        write_json(str(out_json), result)
+        print(f"[save] JSON  -> {out_json}")
+
+        with open(out_txt, "w", encoding="utf-8") as f:
+            # reuse console summary into a file
+            from io import StringIO
+            buf = StringIO()
+            # temporarily capture stdout for the same summary
+            orig_stdout = sys.stdout
+            try:
+                sys.stdout = buf
+                print_summary(result)
+            finally:
+                sys.stdout = orig_stdout
+            f.write(buf.getvalue())
+        print(f"[save] TEXT  -> {out_txt}")
+
+        # optional CSV (top IPs/ports)
+        write_csv(str(out_csv), result)
+        print(f"[save] CSV   -> {out_csv}")
+
+        # ---------- optional VirusTotal step ----------
+        # Runs if VT_API_KEY is set or --vt is passed (unless --no-vt)
         maybe_run_vt_check(
-            profiler_json_path=json_path,
+            profiler_json_path=out_json,
             pcap_path=args.pcap,
             outdir=args.outdir,
             force=args.vt,
             disable=args.no_vt
         )
+
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user.", file=sys.stderr)
+    except Exception as e:
+        print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
+        sys.exit(1)
+
 
 
 # ---------- CLI ----------
