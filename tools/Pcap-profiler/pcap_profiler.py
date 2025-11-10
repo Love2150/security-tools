@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly) with HTML report
-# Examples:
+# PCAP Quick Profiler (Windows-friendly) with HTML report + Dark Mode
+# Usage:
 #   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean, pstdev
+from statistics import mean
 from typing import Any, Dict, List, Optional
 
 # ---- Dependencies ----
@@ -69,11 +69,7 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
             pass
     try:
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        else:
-            dt = dt.astimezone(timezone.utc)
-        return dt
+        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         pass
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
@@ -84,6 +80,7 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
+    """Return a UTC datetime for the packet, robust to JSON/pyshark quirks."""
     try:
         fi = getattr(pkt, "frame_info", None)
         if fi:
@@ -150,13 +147,13 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     dst_ports = Counter()
 
     # for beacon scoring
-    flow_times = defaultdict(list)  # key = (dst_ip, sni)
-
+    flow_times = defaultdict(list)  # key = (dst_ip, sni or "")
+    # tshark params (speed first)
     custom_params: List[str] = ['-n']
     for m in (decode_maps or []):
         custom_params += ['-d', m]
 
-    # Main pass
+    # --- Main pass (limit to useful protocols; faster JSON parser) ---
     cap = pyshark.FileCapture(
         path,
         display_filter="dns || tls || http",
@@ -191,7 +188,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
                 if d:
                     dst_ips[d] += 1
 
-            # collect times for beacon scoring
+            # collect times for beacon scoring (fallback to dst-only if SNI missing later)
             sni_val = None
             try:
                 tls_layer = getattr(pkt, "tls", None)
@@ -217,7 +214,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     finally:
         cap.close()
 
-    # HTTP details
+    # --- HTTP details ---
     http_cap = pyshark.FileCapture(
         path,
         display_filter="http",
@@ -251,10 +248,10 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     finally:
         http_cap.close()
 
-    # TLS details
+    # --- TLS details (handshakes-only speeds up SNI/JA3 extraction) ---
     tls_cap = pyshark.FileCapture(
         path,
-        display_filter="tls",   # or "tls.handshake" for handshakes only
+        display_filter="tls.handshake",   # "tls" if you also want application data stats
         keep_packets=False,
         use_json=True,
         eventloop=loop,
@@ -267,17 +264,13 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
             if not tls:
                 continue
             v = getattr(tls, "handshake_version", None)
-            if v:
-                tls_versions[v] += 1
+            if v: tls_versions[v] += 1
             cs = getattr(tls, "handshake_ciphersuite", None)
-            if cs:
-                tls_ciphers[cs] += 1
+            if cs: tls_ciphers[cs] += 1
             sni = getattr(tls, "handshake_extensions_server_name", None)
-            if sni:
-                tls_sni[sni] += 1
+            if sni: tls_sni[sni] += 1
             ja3 = getattr(tls, "handshake_ja3", None)
-            if ja3:
-                tls_ja3[ja3] += 1
+            if ja3: tls_ja3[ja3] += 1
     finally:
         tls_cap.close()
         try:
@@ -285,25 +278,35 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         except Exception:
             pass
 
-    # Beaconing suspects
+    # --- Beaconing suspects (tuned) ---
     def score_beacon(times: list[float]) -> float:
-        if len(times) < 5:
+        if len(times) < 3:  # allow smaller samples
             return 0.0
         times.sort()
         deltas = [times[i+1] - times[i] for i in range(len(times)-1)]
-        mu = mean(deltas)
+        mu = sum(deltas) / len(deltas)
         if mu <= 0:
             return 0.0
-        sigma = pstdev(deltas) if len(deltas) > 1 else 0.0
-        cv = (sigma / mu) if mu > 0 else 1.0
-        return max(0.0, min(1.0, 1.0 - min(max(cv, 0.0), 1.0)))
+        # simple population stddev (avoid importing pstdev)
+        var = sum((x - mu) ** 2 for x in deltas) / len(deltas)
+        sigma = var ** 0.5
+        cv = sigma / mu  # 0 = perfectly periodic
+        # map to 0..1, lower CV => higher score
+        score = 1.0 - min(max(cv, 0.0), 1.0)
+        return max(0.0, min(1.0, score))
+
+    # collapse flows: keep SNI when present, otherwise group by dst only
+    collapsed: Dict[tuple[str, str], List[float]] = {}
+    for (dst, sni), times in flow_times.items():
+        key = (dst, sni or "")
+        collapsed.setdefault(key, []).extend(times)
 
     beacons = []
-    for (dst, sni), times in flow_times.items():
+    for (dst, sni), times in collapsed.items():
         sc = score_beacon(times)
-        if sc >= 0.60:
+        if sc >= 0.45:  # a bit more permissive
             avg_int = round(sum(times[i+1]-times[i] for i in range(len(times)-1)) / (len(times)-1), 2) if len(times) > 1 else 0.0
-            beacons.append({"dst": dst, "sni": sni or "", "hits": len(times), "avg_int": avg_int, "score": round(sc, 3)})
+            beacons.append({"dst": dst, "sni": sni, "hits": len(times), "avg_int": avg_int, "score": round(sc, 3)})
     beacons.sort(key=lambda x: (-x["score"], -x["hits"]))
     beacons_top = beacons[:top_n]
 
@@ -389,7 +392,7 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w.writeheader()
         w.writerows(rows)
 
-# ---------- HTML report ----------
+# ---------- HTML report (with Dark Mode toggle) ----------
 HTML_TEMPLATE = """
 <!doctype html>
 <html lang="en"><head>
@@ -397,24 +400,66 @@ HTML_TEMPLATE = """
 <title>PCAP Quick Profiler — Report</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-:root{--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--accent:#2563eb}
-body{font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;margin:24px;color:var(--ink)}
+:root{
+  --ink:#0f172a; --bg:#ffffff; --muted:#475569; --line:#e2e8f0; --accent:#2563eb;
+  --card:#ffffff; --shadow:0 1px 0 rgba(2,6,23,.03);
+}
+:root.dark{
+  --ink:#e5e7eb; --bg:#0b1220; --muted:#9aa4b2; --line:#1f2937; --accent:#60a5fa;
+  --card:#0f172a; --shadow:0 0 0 rgba(0,0,0,0);
+}
+html,body{height:100%}
+body{font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;margin:24px;color:var(--ink);background:var(--bg);transition:background .2s,color .2s}
 h1{font-size:1.4rem;margin:0}
 .meta{color:var(--muted);font-size:.92rem}
-.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin:16px 0;box-shadow:0 1px 0 rgba(2,6,23,.03)}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin:16px 0;box-shadow:var(--shadow);background:var(--card)}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 table{border-collapse:collapse;width:100%}
 th,td{border:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}
-th{background:#f8fafc}
-.badge{background:#eff6ff;color:#1d4ed8;padding:2px 8px;border-radius:999px;font-size:.8rem}
+th{background:rgba(2,6,23,.03)}
+:root.dark th{background:rgba(255,255,255,.05)}
 small{color:var(--muted)}
+.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:6px 12px;font-size:.9rem;cursor:pointer}
+.btn:hover{filter:brightness(1.05)}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+.badge{background:#eff6ff;color:#1d4ed8;padding:2px 8px;border-radius:999px;font-size:.8rem}
+:root.dark .badge{background:#172554;color:#93c5fd}
 </style>
-</head><body>
+<script>
+(function(){
+  const saved = localStorage.getItem('pp-dark') || 'auto';
+  const prefers = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = saved==='dark' || (saved==='auto' && prefers);
+  if(isDark) document.documentElement.classList.add('dark');
+  window.__ppMode = saved;
+})();
+function toggleMode(){
+  const root = document.documentElement;
+  const nowDark = root.classList.toggle('dark');
+  const mode = nowDark ? 'dark' : 'light';
+  localStorage.setItem('pp-dark', mode);
+  const btn = document.getElementById('modeBtn');
+  if(btn) btn.textContent = nowDark ? '☀️ Light' : '🌙 Dark';
+}
+function initModeBtn(){
+  const btn = document.getElementById('modeBtn');
+  const isDark = document.documentElement.classList.contains('dark');
+  btn.textContent = isDark ? '☀️ Light' : '🌙 Dark';
+}
+</script>
+</head><body onload="initModeBtn()">
+<div class="toolbar">
+  <div>
+    <strong>PCAP Quick Profiler — Report</strong><br>
+    <small class="meta">Generated: {{ now }} UTC</small>
+  </div>
+  <div><button id="modeBtn" class="btn" onclick="toggleMode()">🌙 Dark</button></div>
+</div>
+
 <div class="card">
-  <h1>PCAP Quick Profiler — Report</h1>
   <p class="meta">File: <span class="code">{{ s.file }}</span><br>
   Window: {{ s.start or "?" }} → {{ s.end or "?" }} · Duration: {{ "%.2fs"|format(s.duration or 0) }} · Packets: {{ "{:,}".format(s.packets) }} · Bytes: {{ "{:,}".format(s.bytes) }}</p>
 </div>
@@ -436,7 +481,7 @@ a:hover{text-decoration:underline}
     <table>{% for v,c in s.tls_sni %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.tls_sni %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
   </div>
   <div><strong>TLS JA3</strong>
-    <table>{% for v,c in s.tls_ja3 %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.tls_ja3 %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+    <table>{% for v,c in s.tls_ja3 %}<tr><td class="code">{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.tls_ja3 %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
   </div>
   <div><strong>Protocols</strong>
     <table>{% for v,c in s.protocols %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.protocols %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
@@ -469,14 +514,10 @@ a:hover{text-decoration:underline}
   </div>
 </div>
 
-<div class="card">
-  <small>Generated: {{ now }} UTC</small>
-</div>
 </body></html>
 """
 
 def write_html(path: str, data: Dict[str, Any]) -> None:
-    # normalize keys to simple attrs for the template
     s = {
         "file": data.get("file"),
         "packets": data.get("packets"),
@@ -498,9 +539,11 @@ def write_html(path: str, data: Dict[str, Any]) -> None:
         "tls_sni": data.get("tls_sni", []),
         "tls_ja3": data.get("tls_ja3", []),
         "beacon_suspects": data.get("beacon_suspects", []),
-        "now": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
     }
-    html = Template(HTML_TEMPLATE).render(s=s)
+    html = Template(HTML_TEMPLATE).render(
+        s=s,
+        now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+    )
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
 
