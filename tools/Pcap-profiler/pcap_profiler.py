@@ -168,158 +168,156 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     custom_params: List[str] = []
     for m in (decode_maps or []):
         custom_params += ["-d", m]
-
-# make sure this is defined once, before you create captures
-custom_params = ['-n']  # disable DNS name resolution (speed boost)
+        
+# make sure this is defined once before captures
+custom_params = ['-n']  # disable DNS resolution (speed boost)
 
 # --- Main pass (focus on useful protocols + faster parser)
-
 cap = pyshark.FileCapture(
-        path,
-        keep_packets=False,
-        use_json=True,
-        eventloop=loop,
-        custom_parameters=custom_params,
-    )
+    path,
+    display_filter="dns || tls || http",
+    keep_packets=False,
+    use_json=True,
+    eventloop=loop,
+    custom_parameters=custom_params,
+)
+try:
+    for pkt in cap:
+        total_packets += 1
+        frame_len = safe_int(getattr(pkt.frame_info, "len", 0))
+        total_bytes += frame_len
+
+        dt = safe_sniff_time(pkt)
+        if dt:
+            if not first_ts or dt < first_ts:
+                first_ts = dt
+            if not last_ts or dt > last_ts:
+                last_ts = dt
+
+        hl = getattr(pkt, "highest_layer", "UNKNOWN")
+        proto_counter[hl] += 1
+        proto_bytes[hl] += frame_len
+
+        ip = getattr(pkt, "ip", None)
+        if ip:
+            s = getattr(ip, "src", None)
+            d = getattr(ip, "dst", None)
+            if s:
+                src_ips[s] += 1
+            if d:
+                dst_ips[d] += 1
+
+        tcp = getattr(pkt, "tcp", None)
+        udp = getattr(pkt, "udp", None)
+        if tcp:
+            p = getattr(tcp, "dstport", None)
+            if p:
+                dst_ports[p] += 1
+        elif udp:
+            p = getattr(udp, "dstport", None)
+            if p:
+                dst_ports[p] += 1
+finally:
+    cap.close()
+
+# --- HTTP pass
+http_cap = pyshark.FileCapture(
+    path,
+    display_filter="http",
+    keep_packets=False,
+    use_json=True,
+    eventloop=loop,
+    custom_parameters=custom_params,
+)
+http_hosts = Counter()
+http_uas = Counter()
+http_urls = Counter()
+http_ctypes = Counter()
+try:
+    for pkt in http_cap:
+        http = getattr(pkt, "http", None)
+        if not http:
+            continue
+        host = getattr(http, "host", None)
+        if host:
+            http_hosts[host] += 1
+        ua = getattr(http, "user_agent", None)
+        if ua:
+            http_uas[ua] += 1
+        full = getattr(http, "request_full_uri", None)
+        if full:
+            http_urls[full] += 1
+        else:
+            uri = getattr(http, "request_uri", None)
+            if host and uri:
+                http_urls[f"http://{host}{uri}"] += 1
+        ctype = getattr(http, "content_type", None)
+        if ctype:
+            http_ctypes[ctype] += 1
+finally:
+    http_cap.close()
+
+# --- TLS pass (handshakes-only is faster: use "tls.handshake" if you like)
+tls_cap = pyshark.FileCapture(
+    path,
+    display_filter="tls",           # or "tls.handshake"
+    keep_packets=False,
+    use_json=True,
+    eventloop=loop,
+    custom_parameters=custom_params,
+)
+tls_versions = Counter()
+tls_ciphers = Counter()
+tls_sni = Counter()
+tls_ja3 = Counter()
+try:
+    for pkt in tls_cap:
+        tls = getattr(pkt, "tls", None)
+        if not tls:
+            continue
+        v = getattr(tls, "handshake_version", None)
+        if v:
+            tls_versions[v] += 1
+        cs = getattr(tls, "handshake_ciphersuite", None)
+        if cs:
+            tls_ciphers[cs] += 1
+        sni = getattr(tls, "handshake_extensions_server_name", None)
+        if sni:
+            tls_sni[sni] += 1
+        ja3 = getattr(tls, "handshake_ja3", None)
+        if ja3:
+            tls_ja3[ja3] += 1
+finally:
+    tls_cap.close()
     try:
-        for pkt in cap:
-            total_packets += 1
-            frame_len = safe_int(getattr(pkt.frame_info, "len", 0))
-            total_bytes += frame_len
+        loop.close()
+    except Exception:
+        pass
 
-            dt = safe_sniff_time(pkt)
-            if dt:
-                if not first_ts or dt < first_ts:
-                    first_ts = dt
-                if not last_ts or dt > last_ts:
-                    last_ts = dt
+dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
-            hl = getattr(pkt, "highest_layer", "UNKNOWN")
-            proto_counter[hl] += 1
-            proto_bytes[hl] += frame_len
+return {
+    "file": str(Path(path).resolve()),
+    "packets": total_packets,
+    "bytes": total_bytes,
+    "start": first_ts.isoformat() if first_ts else None,
+    "end": last_ts.isoformat() if last_ts else None,
+    "duration": dur,
+    "protocols": proto_counter.most_common(),
+    "bytes_by_protocol": proto_bytes.most_common(),
+    "src_ips": src_ips.most_common(top_n),
+    "dst_ips": dst_ips.most_common(top_n),
+    "dst_ports": dst_ports.most_common(top_n),
+    "http_hosts": http_hosts.most_common(top_n),
+    "http_user_agents": http_uas.most_common(top_n),
+    "http_urls": http_urls.most_common(top_n),
+    "http_content_types": http_ctypes.most_common(top_n),
+    "tls_versions": tls_versions.most_common(top_n),
+    "tls_ciphers": tls_ciphers.most_common(top_n),
+    "tls_sni": tls_sni.most_common(top_n),
+    "tls_ja3": tls_ja3.most_common(top_n),
+}
 
-            ip = getattr(pkt, "ip", None)
-            if ip:
-                s = getattr(ip, "src", None)
-                d = getattr(ip, "dst", None)
-                if s:
-                    src_ips[s] += 1
-                if d:
-                    dst_ips[d] += 1
-
-            tcp = getattr(pkt, "tcp", None)
-            udp = getattr(pkt, "udp", None)
-            if tcp:
-                p = getattr(tcp, "dstport", None)
-                if p:
-                    dst_ports[p] += 1
-            elif udp:
-                p = getattr(udp, "dstport", None)
-                if p:
-                    dst_ports[p] += 1
-            pass        
-    finally:
-        cap.close()
-
-    # HTTP
-    http_cap = pyshark.FileCapture(
-        path,
-        keep_packets=False,
-        use_json=True,
-        display_filter="http",
-        eventloop=loop,
-        custom_parameters=custom_params,
-    )
-    http_hosts = Counter()
-    http_uas = Counter()
-    http_urls = Counter()
-    http_ctypes = Counter()
-    try:
-        for pkt in http_cap:
-            http = getattr(pkt, "http", None)
-            if not http:
-                continue
-            host = getattr(http, "host", None)
-            if host:
-                http_hosts[host] += 1
-            ua = getattr(http, "user_agent", None)
-            if ua:
-                http_uas[ua] += 1
-            full = getattr(http, "request_full_uri", None)
-            if full:
-                http_urls[full] += 1
-            else:
-                uri = getattr(http, "request_uri", None)
-                if host and uri:
-                    http_urls[f"http://{host}{uri}"] += 1
-            ctype = getattr(http, "content_type", None)
-            if ctype:
-                http_ctypes[ctype] += 1
-            pass
-    finally:
-        http_cap.close()
-
-    # TLS
-    tls_cap = pyshark.FileCapture(
-        path,
-        display_filet="tls",
-        keep_packets=False,
-        use_json=True,
-        display_filter="tls",
-        eventloop=loop,
-        custom_parameters=custom_params,
-    )
-    tls_versions = Counter()
-    tls_ciphers = Counter()
-    tls_sni = Counter()
-    tls_ja3 = Counter()
-    try:
-        for pkt in tls_cap:
-            tls = getattr(pkt, "tls", None)
-            if not tls:
-                continue
-            v = getattr(tls, "handshake_version", None)
-            if v:
-                tls_versions[v] += 1
-            cs = getattr(tls, "handshake_ciphersuite", None)
-            if cs:
-                tls_ciphers[cs] += 1
-            sni = getattr(tls, "handshake_extensions_server_name", None)
-            if sni:
-                tls_sni[sni] += 1
-            ja3 = getattr(tls, "handshake_ja3", None)
-            if ja3:
-                tls_ja3[ja3] += 1
-    finally:
-        tls_cap.close()
-        try:
-            loop.close()
-        except Exception:
-            pass
-
-    dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
-
-    return {
-        "file": str(Path(path).resolve()),
-        "packets": total_packets,
-        "bytes": total_bytes,
-        "start": first_ts.isoformat() if first_ts else None,
-        "end": last_ts.isoformat() if last_ts else None,
-        "duration": dur,
-        "protocols": proto_counter.most_common(),
-        "bytes_by_protocol": proto_bytes.most_common(),
-        "src_ips": src_ips.most_common(top_n),
-        "dst_ips": dst_ips.most_common(top_n),
-        "dst_ports": dst_ports.most_common(top_n),
-        "http_hosts": http_hosts.most_common(top_n),
-        "http_user_agents": http_uas.most_common(top_n),
-        "http_urls": http_urls.most_common(top_n),
-        "http_content_types": http_ctypes.most_common(top_n),
-        "tls_versions": tls_versions.most_common(top_n),
-        "tls_ciphers": tls_ciphers.most_common(top_n),
-        "tls_sni": tls_sni.most_common(top_n),
-        "tls_ja3": tls_ja3.most_common(top_n),
-    }
 
 
 # ---------- Output writers ----------
