@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # PCAP Quick Profiler (Windows-friendly)
-# Examples (PowerShell / CMD):
+# Examples:
 #   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
 #   python .\pcap_profiler.py .\samples\capture.pcap --decode tcp.port==36050,http
 #   python .\pcap_profiler.py .\samples\capture.pcap --vt      (requires VT_API_KEY)
@@ -15,9 +15,10 @@ import json
 import os
 import shutil
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import mean, pstdev
 from typing import Any, Dict, List, Optional
 
 # ---- Dependencies ----
@@ -41,13 +42,13 @@ def ensure_tshark() -> None:
         sys.exit(1)
 
 def fmt_bytes(n: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    units = ["B", "KB", "MB", "GB", "TB", "PB", "EB"]
     val = float(n)
     for u in units:
         if val < 1024:
             return f"{val:.1f} {u}"
         val /= 1024
-    return f"{val:.1f} EB"
+    return f"{val:.1f} ZB"
 
 def safe_int(x: Any, default: int = 0) -> int:
     try:
@@ -82,10 +83,10 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Return a UTC datetime for the packet, robust to JSON/csvpyshark quirks."""
+    """Return a UTC datetime for the packet, robust to JSON/pyshark quirks."""
     try:
         fi = getattr(pkt, "frame_info", None)
-        # 1) Best: epoch seconds (always numeric)
+        # Prefer epoch seconds (numeric)
         if fi:
             epoch = getattr(fi, "time_epoch", None)
             if epoch is not None:
@@ -93,8 +94,7 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
                     return datetime.fromtimestamp(float(str(epoch)), tz=timezone.utc)
                 except Exception:
                     pass
-
-        # 2) If PyShark already gave a datetime
+        # If PyShark gave a datetime already
         dt = getattr(pkt, "sniff_time", None)
         if isinstance(dt, datetime):
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -102,8 +102,7 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
             parsed = _parse_iso_utc(str(dt))
             if parsed:
                 return parsed
-
-        # 3) Human string (e.g., "2025-10-08T20:20:28")
+        # Human string
         if fi:
             human = getattr(fi, "time", None)
             if human:
@@ -113,7 +112,6 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
     except Exception:
         pass
     return None
-
 
 # ---------- Report path helpers ----------
 def default_reports_dir() -> Path:
@@ -155,10 +153,13 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     dst_ips = Counter()
     dst_ports = Counter()
 
+    # for beacon scoring
+    flow_times = defaultdict(list)  # key = (dst_ip, sni)
+
     # tshark params (speed first)
     custom_params: List[str] = ['-n']   # no DNS resolution (big speedup)
     for m in (decode_maps or []):
-        custom_params += ['-d', m]      # decode-as maps, e.g. tcp.port==36050,http
+        custom_params += ['-d', m]      # decode-as maps, e.g., tcp.port==36050,http
 
     # --- Main pass (limit to useful protocols; faster JSON parser) ---
     cap = pyshark.FileCapture(
@@ -195,6 +196,20 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
                 if d:
                     dst_ips[d] += 1
 
+            # --- collect per-flow times for beacon scoring ---
+            sni_val = None
+            try:
+                tls_layer = getattr(pkt, "tls", None)
+                if tls_layer:
+                    sni_val = getattr(tls_layer, "handshake_extensions_server_name", None)
+            except Exception:
+                sni_val = None
+            if ip and dt:
+                dst_ip = getattr(ip, "dst", None)
+                if dst_ip:
+                    flow_times[(dst_ip, sni_val or "")].append(dt.timestamp())
+
+            # ports
             tcp = getattr(pkt, "tcp", None)
             udp = getattr(pkt, "udp", None)
             if tcp:
@@ -245,7 +260,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     finally:
         http_cap.close()
 
-    # --- TLS pass (handshakes-only is faster: use "tls.handshake" if desired) ---
+    # --- TLS pass (handshakes-only is faster: swap to "tls.handshake" if desired) ---
     tls_cap = pyshark.FileCapture(
         path,
         display_filter="tls",   # or "tls.handshake"
@@ -282,6 +297,29 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         except Exception:
             pass
 
+    # --- Beaconing suspects (periodicity scoring) ---
+    def score_beacon(times: list[float]) -> float:
+        if len(times) < 5:
+            return 0.0
+        times.sort()
+        deltas = [times[i+1] - times[i] for i in range(len(times)-1)]
+        mu = mean(deltas)
+        if mu <= 0:
+            return 0.0
+        sigma = pstdev(deltas) if len(deltas) > 1 else 0.0
+        cv = (sigma / mu) if mu > 0 else 1.0  # coefficient of variation
+        # map to 0..1, lower CV = more periodic
+        return max(0.0, min(1.0, 1.0 - min(max(cv, 0.0), 1.0)))
+
+    beacons = []
+    for (dst, sni), times in flow_times.items():
+        sc = score_beacon(times)
+        if sc >= 0.60:  # threshold; tune later
+            avg_int = round(sum(times[i+1]-times[i] for i in range(len(times)-1)) / (len(times)-1), 2) if len(times) > 1 else 0.0
+            beacons.append({"dst": dst, "sni": sni or "", "hits": len(times), "avg_int": avg_int, "score": round(sc, 3)})
+    beacons.sort(key=lambda x: (-x["score"], -x["hits"]))
+    beacons_top = beacons[:top_n]
+
     dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
     return {
@@ -304,6 +342,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         "tls_ciphers": tls_ciphers.most_common(top_n),
         "tls_sni": tls_sni.most_common(top_n),
         "tls_ja3": tls_ja3.most_common(top_n),
+        "beacon_suspects": beacons_top,
     }
 
 # ---------- Output writers ----------
@@ -341,6 +380,15 @@ def print_summary(s: Dict[str, Any]) -> None:
     show("🔐 TLS Ciphers", s["tls_ciphers"])
     show("🔐 TLS SNI", s["tls_sni"])
     show("🔐 TLS JA3", s["tls_ja3"])
+
+    # Beacon suspects table
+    show(
+        "🚨 Beacon suspects (dst sni → hits · avg_int(s) · score)",
+        [
+            (f"{b['dst']} {b['sni']}".strip(), f"{b['hits']} · {b['avg_int']}s · {b['score']}")
+            for b in s.get("beacon_suspects", [])
+        ],
+    )
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
@@ -465,5 +513,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
