@@ -1,0 +1,53 @@
+PCAP Quick Profiler — C:\Users\brand\Desktop\Projects\security-tools\tools\Pcap-profiler\samples\capture_3.pcap
+================================================================================
+Packets: 7
+Bytes:   3,812
+Start:   None
+End:     None
+Duration: 0.00s   Avg throughput: n/a
+
+🖧 Protocols:
+  - TCP.SEGMENTS  (4)
+  - HTTP  (3)
+
+📦 Bytes by protocol:
+  - TCP.SEGMENTS  (3557)
+  - HTTP  (255)
+
+🌍 Top Source IPs:
+  - 172.16.0.130  (4)
+  - 185.141.27.187  (3)
+
+🌍 Top Destination IPs:
+  - 185.141.27.187  (4)
+  - 172.16.0.130  (3)
+
+🔢 Top Destination Ports:
+  - 80  (4)
+  - 49345  (1)
+  - 49346  (1)
+  - 49347  (1)
+
+🌐 HTTP Hosts:
+  - 185.141.27.187  (4)
+
+🌐 HTTP User-Agents:
+  - Mozilla/4.08 (Charon; Inferno)  (4)
+
+🌐 HTTP URLs:
+  (none)
+
+📁 HTTP Content Types:
+  - application/octet-stream  (4)
+
+🔐 TLS Versions:
+  (none)
+
+🔐 TLS Ciphers:
+  (none)
+
+🔐 TLS SNI:
+  (none)
+
+🔐 TLS JA3:
+  (none)

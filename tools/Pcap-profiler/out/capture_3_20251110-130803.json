@@ -1,0 +1,89 @@
+{
+  "file": "C:\\Users\\brand\\Desktop\\Projects\\security-tools\\tools\\Pcap-profiler\\samples\\capture_3.pcap",
+  "packets": 7,
+  "bytes": 3812,
+  "start": null,
+  "end": null,
+  "duration": 0.0,
+  "protocols": [
+    [
+      "TCP.SEGMENTS",
+      4
+    ],
+    [
+      "HTTP",
+      3
+    ]
+  ],
+  "bytes_by_protocol": [
+    [
+      "TCP.SEGMENTS",
+      3557
+    ],
+    [
+      "HTTP",
+      255
+    ]
+  ],
+  "src_ips": [
+    [
+      "172.16.0.130",
+      4
+    ],
+    [
+      "185.141.27.187",
+      3
+    ]
+  ],
+  "dst_ips": [
+    [
+      "185.141.27.187",
+      4
+    ],
+    [
+      "172.16.0.130",
+      3
+    ]
+  ],
+  "dst_ports": [
+    [
+      "80",
+      4
+    ],
+    [
+      "49345",
+      1
+    ],
+    [
+      "49346",
+      1
+    ],
+    [
+      "49347",
+      1
+    ]
+  ],
+  "http_hosts": [
+    [
+      "185.141.27.187",
+      4
+    ]
+  ],
+  "http_user_agents": [
+    [
+      "Mozilla/4.08 (Charon; Inferno)",
+      4
+    ]
+  ],
+  "http_urls": [],
+  "http_content_types": [
+    [
+      "application/octet-stream",
+      4
+    ]
+  ],
+  "tls_versions": [],
+  "tls_ciphers": [],
+  "tls_sni": [],
+  "tls_ja3": []
+}

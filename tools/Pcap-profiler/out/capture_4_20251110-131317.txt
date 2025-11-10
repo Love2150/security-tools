@@ -1,0 +1,88 @@
+PCAP Quick Profiler — C:\Users\brand\Desktop\Projects\security-tools\tools\Pcap-profiler\samples\capture_4.pcap
+================================================================================
+Packets: 294
+Bytes:   228,686
+Start:   None
+End:     None
+Duration: 0.00s   Avg throughput: n/a
+
+🖧 Protocols:
+  - TLS  (155)
+  - TCP.SEGMENTS  (93)
+  - DNS  (28)
+  - HTTP  (11)
+  - OCSP  (5)
+  - CERTIFICATE REVOCATION LIST  (2)
+
+📦 Bytes by protocol:
+  - TLS  (118694)
+  - TCP.SEGMENTS  (97263)
+  - OCSP  (4535)
+  - DNS  (3740)
+  - HTTP  (3045)
+  - CERTIFICATE REVOCATION LIST  (1409)
+
+🌍 Top Source IPs:
+  - 10.10.0.20  (112)
+  - 104.80.224.57  (71)
+  - 20.190.160.132  (32)
+  - 108.167.165.249  (21)
+  - 8.8.8.8  (14)
+  - 13.107.42.16  (13)
+  - 52.109.12.18  (12)
+  - 52.109.76.68  (6)
+  - 51.105.71.136  (4)
+  - 104.110.191.177  (3)
+
+🌍 Top Destination IPs:
+  - 10.10.0.20  (182)
+  - 20.190.160.132  (42)
+  - 104.80.224.57  (15)
+  - 108.167.165.249  (15)
+  - 8.8.8.8  (14)
+  - 52.109.12.18  (6)
+  - 51.105.71.136  (5)
+  - 52.109.76.68  (3)
+  - 13.107.42.16  (3)
+  - 104.110.191.177  (3)
+
+🔢 Top Destination Ports:
+  - 443  (89)
+  - 56228  (21)
+  - 56190  (20)
+  - 56230  (16)
+  - 56185  (15)
+  - 53  (14)
+  - 56229  (14)
+  - 56054  (13)
+  - 56181  (10)
+  - 80  (9)
+
+🌐 HTTP Hosts:
+  - r3.o.lencr.org  (3)
+  - ctldl.windowsupdate.com  (2)
+  - ocsp.digicert.com  (2)
+  - crl.identrust.com  (1)
+  - x1.c.lencr.org  (1)
+
+🌐 HTTP User-Agents:
+  - Microsoft-CryptoAPI/10.0  (9)
+
+🌐 HTTP URLs:
+  (none)
+
+📁 HTTP Content Types:
+  - application/ocsp-response  (5)
+  - application/pkix-crl  (2)
+
+🔐 TLS Versions:
+  (none)
+
+🔐 TLS Ciphers:
+  (none)
+
+🔐 TLS SNI:
+  (none)
+
+🔐 TLS JA3:
+  (none)
