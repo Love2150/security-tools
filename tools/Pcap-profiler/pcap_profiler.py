@@ -26,7 +26,18 @@ try:
 except Exception:
     print("ERROR: pyshark not installed. Run: pip install pyshark", file=sys.stderr)
     sys.exit(1)
-
+    print("Also install Wireshark/TShark and ensure tshark is on PATH.", file=sys.stderr)
+    sys.exit(1)
+# ---- Fast capture helper (ADD THIS) ----
+def get_capture(pcap_path: str):
+    return pyshark.FileCapture(
+        pcap_path,
+        display_filter="tls || dns || http",  # focus on useful protocols
+        keep_packets=False,                   # don’t store packets in RAM
+        use_json=True,                        # faster parsing
+        custom_parameters=['-n']              # disable DNS name resolution
+        # , tshark_path="C:\\Program Files\\Wireshark\\tshark.exe"  # if needed on Windows
+    )
 
 # ---------- Helpers: environment & formatting ----------
 def ensure_tshark() -> None:
@@ -158,10 +169,15 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     for m in (decode_maps or []):
         custom_params += ["-d", m]
 
+# make sure this is defined once, before you create captures
+custom_params = ['-n']  # disable DNS name resolution (speed boost)
+
+# --- Main pass (focus on useful protocols + faster parser)
+
     cap = pyshark.FileCapture(
         path,
         keep_packets=False,
-        use_json=False,
+        use_json=True,
         eventloop=loop,
         custom_parameters=custom_params,
     )
@@ -201,6 +217,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
                 p = getattr(udp, "dstport", None)
                 if p:
                     dst_ports[p] += 1
+            pass        
     finally:
         cap.close()
 
@@ -208,7 +225,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     http_cap = pyshark.FileCapture(
         path,
         keep_packets=False,
-        use_json=False,
+        use_json=True,
         display_filter="http",
         eventloop=loop,
         custom_parameters=custom_params,
@@ -238,14 +255,16 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
             ctype = getattr(http, "content_type", None)
             if ctype:
                 http_ctypes[ctype] += 1
+            pass
     finally:
         http_cap.close()
 
     # TLS
     tls_cap = pyshark.FileCapture(
         path,
+        display_filet="tls",
         keep_packets=False,
-        use_json=False,
+        use_json=True,
         display_filter="tls",
         eventloop=loop,
         custom_parameters=custom_params,
