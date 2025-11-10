@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly)
+# PCAP Quick Profiler (Windows-friendly) with HTML report
 # Examples:
 #   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
-#   python .\pcap_profiler.py .\samples\capture.pcap --decode tcp.port==36050,http
-#   python .\pcap_profiler.py .\samples\capture.pcap --vt      (requires VT_API_KEY)
-#   python .\pcap_profiler.py .\samples\capture.pcap --no-vt
 
 from __future__ import annotations
 
@@ -29,9 +26,14 @@ except Exception:
     print("Also install Wireshark/TShark and ensure 'tshark' is on PATH, then restart your terminal.", file=sys.stderr)
     sys.exit(1)
 
+try:
+    from jinja2 import Template
+except Exception:
+    print("ERROR: jinja2 not installed. Run: python -m pip install jinja2", file=sys.stderr)
+    sys.exit(1)
+
 # ---------- Helpers ----------
 def ensure_tshark() -> None:
-    """Exit with a friendly message if TShark isn't on PATH."""
     if shutil.which("tshark") is None:
         print(
             "ERROR: TShark not found on PATH.\n"
@@ -57,7 +59,6 @@ def safe_int(x: Any, default: int = 0) -> int:
         return default
 
 def _parse_iso_utc(s: str) -> Optional[datetime]:
-    """Parse many common timestamp formats to UTC datetime."""
     if not s:
         return None
     s = str(s).strip()
@@ -83,10 +84,8 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Return a UTC datetime for the packet, robust to JSON/pyshark quirks."""
     try:
         fi = getattr(pkt, "frame_info", None)
-        # Prefer epoch seconds (numeric)
         if fi:
             epoch = getattr(fi, "time_epoch", None)
             if epoch is not None:
@@ -94,7 +93,6 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
                     return datetime.fromtimestamp(float(str(epoch)), tz=timezone.utc)
                 except Exception:
                     pass
-        # If PyShark gave a datetime already
         dt = getattr(pkt, "sniff_time", None)
         if isinstance(dt, datetime):
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -102,7 +100,6 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
             parsed = _parse_iso_utc(str(dt))
             if parsed:
                 return parsed
-        # Human string
         if fi:
             human = getattr(fi, "time", None)
             if human:
@@ -117,7 +114,7 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
 def default_reports_dir() -> Path:
     return Path.cwd() / "reports" / "pcap-profiler"
 
-def output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path, Path]:
+def output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path, Path, Path]:
     base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
     base_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(pcap_path).stem
@@ -125,7 +122,8 @@ def output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path, Pat
     json_path = base_dir / f"{stem}_{ts}.json"
     txt_path  = base_dir / f"{stem}_{ts}.txt"
     csv_path  = base_dir / f"{stem}_{ts}.csv"
-    return json_path, txt_path, csv_path
+    html_path = base_dir / f"{stem}_{ts}.html"
+    return json_path, txt_path, csv_path, html_path
 
 def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path]:
     base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
@@ -138,11 +136,9 @@ def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path]:
 def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = None) -> Dict[str, Any]:
     ensure_tshark()
 
-    # Windows-friendly asyncio loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # state / counters
     total_packets = 0
     total_bytes = 0
     first_ts: Optional[datetime] = None
@@ -156,12 +152,11 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     # for beacon scoring
     flow_times = defaultdict(list)  # key = (dst_ip, sni)
 
-    # tshark params (speed first)
-    custom_params: List[str] = ['-n']   # no DNS resolution (big speedup)
+    custom_params: List[str] = ['-n']
     for m in (decode_maps or []):
-        custom_params += ['-d', m]      # decode-as maps, e.g., tcp.port==36050,http
+        custom_params += ['-d', m]
 
-    # --- Main pass (limit to useful protocols; faster JSON parser) ---
+    # Main pass
     cap = pyshark.FileCapture(
         path,
         display_filter="dns || tls || http",
@@ -196,7 +191,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
                 if d:
                     dst_ips[d] += 1
 
-            # --- collect per-flow times for beacon scoring ---
+            # collect times for beacon scoring
             sni_val = None
             try:
                 tls_layer = getattr(pkt, "tls", None)
@@ -209,7 +204,6 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
                 if dst_ip:
                     flow_times[(dst_ip, sni_val or "")].append(dt.timestamp())
 
-            # ports
             tcp = getattr(pkt, "tcp", None)
             udp = getattr(pkt, "udp", None)
             if tcp:
@@ -223,7 +217,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     finally:
         cap.close()
 
-    # --- HTTP pass (details) ---
+    # HTTP details
     http_cap = pyshark.FileCapture(
         path,
         display_filter="http",
@@ -232,10 +226,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         eventloop=loop,
         custom_parameters=custom_params,
     )
-    http_hosts = Counter()
-    http_uas = Counter()
-    http_urls = Counter()
-    http_ctypes = Counter()
+    http_hosts = Counter(); http_uas = Counter(); http_urls = Counter(); http_ctypes = Counter()
     try:
         for pkt in http_cap:
             http = getattr(pkt, "http", None)
@@ -260,19 +251,16 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     finally:
         http_cap.close()
 
-    # --- TLS pass (handshakes-only is faster: swap to "tls.handshake" if desired) ---
+    # TLS details
     tls_cap = pyshark.FileCapture(
         path,
-        display_filter="tls",   # or "tls.handshake"
+        display_filter="tls",   # or "tls.handshake" for handshakes only
         keep_packets=False,
         use_json=True,
         eventloop=loop,
         custom_parameters=custom_params,
     )
-    tls_versions = Counter()
-    tls_ciphers = Counter()
-    tls_sni = Counter()
-    tls_ja3 = Counter()
+    tls_versions = Counter(); tls_ciphers = Counter(); tls_sni = Counter(); tls_ja3 = Counter()
     try:
         for pkt in tls_cap:
             tls = getattr(pkt, "tls", None)
@@ -297,7 +285,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         except Exception:
             pass
 
-    # --- Beaconing suspects (periodicity scoring) ---
+    # Beaconing suspects
     def score_beacon(times: list[float]) -> float:
         if len(times) < 5:
             return 0.0
@@ -307,14 +295,13 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         if mu <= 0:
             return 0.0
         sigma = pstdev(deltas) if len(deltas) > 1 else 0.0
-        cv = (sigma / mu) if mu > 0 else 1.0  # coefficient of variation
-        # map to 0..1, lower CV = more periodic
+        cv = (sigma / mu) if mu > 0 else 1.0
         return max(0.0, min(1.0, 1.0 - min(max(cv, 0.0), 1.0)))
 
     beacons = []
     for (dst, sni), times in flow_times.items():
         sc = score_beacon(times)
-        if sc >= 0.60:  # threshold; tune later
+        if sc >= 0.60:
             avg_int = round(sum(times[i+1]-times[i] for i in range(len(times)-1)) / (len(times)-1), 2) if len(times) > 1 else 0.0
             beacons.append({"dst": dst, "sni": sni or "", "hits": len(times), "avg_int": avg_int, "score": round(sc, 3)})
     beacons.sort(key=lambda x: (-x["score"], -x["hits"]))
@@ -380,14 +367,9 @@ def print_summary(s: Dict[str, Any]) -> None:
     show("🔐 TLS Ciphers", s["tls_ciphers"])
     show("🔐 TLS SNI", s["tls_sni"])
     show("🔐 TLS JA3", s["tls_ja3"])
-
-    # Beacon suspects table
     show(
         "🚨 Beacon suspects (dst sni → hits · avg_int(s) · score)",
-        [
-            (f"{b['dst']} {b['sni']}".strip(), f"{b['hits']} · {b['avg_int']}s · {b['score']}")
-            for b in s.get("beacon_suspects", [])
-        ],
+        [(f"{b['dst']} {b['sni']}".strip(), f"{b['hits']} · {b['avg_int']}s · {b['score']}") for b in s.get("beacon_suspects", [])],
     )
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
@@ -406,6 +388,121 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w = csv.DictWriter(f, fieldnames=["category", "key", "count"])
         w.writeheader()
         w.writerows(rows)
+
+# ---------- HTML report ----------
+HTML_TEMPLATE = """
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>PCAP Quick Profiler — Report</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--ink:#0f172a;--muted:#475569;--line:#e2e8f0;--accent:#2563eb}
+body{font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;margin:24px;color:var(--ink)}
+h1{font-size:1.4rem;margin:0}
+.meta{color:var(--muted);font-size:.92rem}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin:16px 0;box-shadow:0 1px 0 rgba(2,6,23,.03)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}
+th{background:#f8fafc}
+.badge{background:#eff6ff;color:#1d4ed8;padding:2px 8px;border-radius:999px;font-size:.8rem}
+small{color:var(--muted)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+</style>
+</head><body>
+<div class="card">
+  <h1>PCAP Quick Profiler — Report</h1>
+  <p class="meta">File: <span class="code">{{ s.file }}</span><br>
+  Window: {{ s.start or "?" }} → {{ s.end or "?" }} · Duration: {{ "%.2fs"|format(s.duration or 0) }} · Packets: {{ "{:,}".format(s.packets) }} · Bytes: {{ "{:,}".format(s.bytes) }}</p>
+</div>
+
+<div class="card grid">
+  <div><strong>Top Source IPs</strong><br><small>count</small>
+    <table>{% for ip,c in s.src_ips %}<tr><td>{{ ip }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.src_ips %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>Top Destination IPs</strong><br><small>count</small>
+    <table>{% for ip,c in s.dst_ips %}<tr><td>{{ ip }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.dst_ips %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>Top Destination Ports</strong><br><small>count</small>
+    <table>{% for p,c in s.dst_ports %}<tr><td>{{ p }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.dst_ports %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+</div>
+
+<div class="card grid">
+  <div><strong>TLS SNI</strong>
+    <table>{% for v,c in s.tls_sni %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.tls_sni %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>TLS JA3</strong>
+    <table>{% for v,c in s.tls_ja3 %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.tls_ja3 %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>Protocols</strong>
+    <table>{% for v,c in s.protocols %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.protocols %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+</div>
+
+<div class="card">
+  <strong>🚨 Beaconing suspects</strong> <span class="badge">experimental</span>
+  <table>
+    <tr><th>Destination</th><th>SNI</th><th>Hits</th><th>Avg Interval (s)</th><th>Score</th></tr>
+    {% for b in s.beacon_suspects %}
+      <tr><td class="code">{{ b.dst }}</td><td class="code">{{ b.sni }}</td><td>{{ b.hits }}</td><td>{{ b.avg_int }}</td><td>{{ "%.3f"|format(b.score) }}</td></tr>
+    {% endfor %}
+    {% if not s.beacon_suspects %}
+      <tr><td colspan="5"><small>(none)</small></td></tr>
+    {% endif %}
+  </table>
+  <small>Score is based on periodicity (lower inter-arrival variance → higher score).</small>
+</div>
+
+<div class="card grid">
+  <div><strong>HTTP Hosts</strong>
+    <table>{% for v,c in s.http_hosts %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.http_hosts %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>HTTP User-Agents</strong>
+    <table>{% for v,c in s.http_user_agents %}<tr><td>{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.http_user_agents %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+  <div><strong>HTTP URLs</strong>
+    <table>{% for v,c in s.http_urls %}<tr><td class="code">{{ v }}</td><td>{{ c }}</td></tr>{% endfor %}{% if not s.http_urls %}<tr><td colspan="2"><small>(none)</small></td></tr>{% endif %}</table>
+  </div>
+</div>
+
+<div class="card">
+  <small>Generated: {{ now }} UTC</small>
+</div>
+</body></html>
+"""
+
+def write_html(path: str, data: Dict[str, Any]) -> None:
+    # normalize keys to simple attrs for the template
+    s = {
+        "file": data.get("file"),
+        "packets": data.get("packets"),
+        "bytes": data.get("bytes"),
+        "start": data.get("start"),
+        "end": data.get("end"),
+        "duration": data.get("duration"),
+        "protocols": data.get("protocols", []),
+        "bytes_by_protocol": data.get("bytes_by_protocol", []),
+        "src_ips": data.get("src_ips", []),
+        "dst_ips": data.get("dst_ips", []),
+        "dst_ports": data.get("dst_ports", []),
+        "http_hosts": data.get("http_hosts", []),
+        "http_user_agents": data.get("http_user_agents", []),
+        "http_urls": data.get("http_urls", []),
+        "http_content_types": data.get("http_content_types", []),
+        "tls_versions": data.get("tls_versions", []),
+        "tls_ciphers": data.get("tls_ciphers", []),
+        "tls_sni": data.get("tls_sni", []),
+        "tls_ja3": data.get("tls_ja3", []),
+        "beacon_suspects": data.get("beacon_suspects", []),
+        "now": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    html = Template(HTML_TEMPLATE).render(s=s)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
 
 # ---------- Optional VirusTotal integration ----------
 def maybe_run_vt_check(
@@ -454,7 +551,7 @@ def main():
     ap.add_argument("--decode", action="append", default=[], help="Decode-as mapping, e.g. tcp.port==36050,http (repeatable)")
     ap.add_argument("--json", help="Also write summary to this JSON path (optional)")
     ap.add_argument("--csv", help="Also write CSV of top IPs/ports to this path (optional)")
-    ap.add_argument("--outdir", help="Directory to auto-save JSON/TXT/CSV (default: reports/pcap-profiler)")
+    ap.add_argument("--outdir", help="Directory to auto-save JSON/TXT/CSV/HTML (default: reports/pcap-profiler)")
     ap.add_argument("--vt", action="store_true", help="Force run VirusTotal check (requires VT_API_KEY)")
     ap.add_argument("--no-vt", action="store_true", help="Disable automatic VirusTotal check")
     args = ap.parse_args()
@@ -468,8 +565,8 @@ def main():
         # 2) Console summary
         print_summary(result)
 
-        # 3) Auto-save JSON/TXT/CSV
-        json_path, txt_path, csv_path = output_paths(args.pcap, args.outdir)
+        # 3) Auto-save JSON/TXT/CSV/HTML
+        json_path, txt_path, csv_path, html_path = output_paths(args.pcap, args.outdir)
         write_json(str(json_path), result)
         print(f"[save] JSON  -> {json_path}")
 
@@ -487,6 +584,9 @@ def main():
 
         write_csv(str(csv_path), result)
         print(f"[save] CSV   -> {csv_path}")
+
+        write_html(str(html_path), result)
+        print(f"[save] HTML  -> {html_path}")
 
         # 4) Optional single-file outputs
         if args.json:
