@@ -174,7 +174,7 @@ custom_params = ['-n']  # disable DNS name resolution (speed boost)
 
 # --- Main pass (focus on useful protocols + faster parser)
 
-    cap = pyshark.FileCapture(
+cap = pyshark.FileCapture(
         path,
         keep_packets=False,
         use_json=True,
