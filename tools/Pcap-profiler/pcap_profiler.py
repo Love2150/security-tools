@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# PCAP Quick Profiler (Windows-friendly) with HTML report + Dark Mode
+# PCAP Quick Profiler (Windows-friendly) with HTML report + Dark Mode + Allowlist
 # Usage:
 #   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
 
@@ -15,7 +15,6 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
 from typing import Any, Dict, List, Optional
 
 # ---- Dependencies ----
@@ -128,6 +127,26 @@ def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path]:
     stem = Path(pcap_path).stem
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     return base_dir / f"{stem}_vt_{ts}.json", base_dir / f"{stem}_vt_{ts}.txt"
+
+# ---------- Allowlist loader ----------
+def _load_allowlist() -> dict:
+    """
+    Look for enrichment/allowlist.json in:
+      1) current working directory
+      2) alongside this script/module
+    """
+    candidates = [
+        Path.cwd() / "enrichment" / "allowlist.json",
+        (Path(__file__).resolve().parent / "enrichment" / "allowlist.json"),
+    ]
+    for p in candidates:
+        try:
+            if p.exists():
+                with open(p, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+    return {"sni": [], "ja3": []}
 
 # ---------- Core profiling ----------
 def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -279,7 +298,7 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
             pass
 
     # --- Beaconing suspects (tuned) ---
-    def score_beacon(times: list[float]) -> float:
+    def score_beacon(times: List[float]) -> float:
         if len(times) < 3:  # allow smaller samples
             return 0.0
         times.sort()
@@ -301,49 +320,35 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         key = (dst, sni or "")
         collapsed.setdefault(key, []).extend(times)
 
-    beacons = []
+    beacons: List[Dict[str, Any]] = []
     for (dst, sni), times in collapsed.items():
         sc = score_beacon(times)
         if sc >= 0.45:  # a bit more permissive
             avg_int = round(sum(times[i+1]-times[i] for i in range(len(times)-1)) / (len(times)-1), 2) if len(times) > 1 else 0.0
             beacons.append({"dst": dst, "sni": sni, "hits": len(times), "avg_int": avg_int, "score": round(sc, 3)})
+
     beacons.sort(key=lambda x: (-x["score"], -x["hits"]))
     beacons_top = beacons[:top_n]
 
+    # --- Allowlist filtering (SNI/JA3) ---
+    _allow = _load_allowlist()
+    _allowed_sni = set(_allow.get("sni", []))
+    _allowed_ja3 = set(_allow.get("ja3", []))
+
+    # Filter beacon suspects by SNI
+    beacons_top = [b for b in beacons_top if b.get("sni", "") not in _allowed_sni]
+
+    # Normalize TLS counters to lists and filter them
+    _tls_sni_list = list(tls_sni.items())
+    _tls_ja3_list = list(tls_ja3.items())
+    _tls_sni_list = [(v, c) for (v, c) in _tls_sni_list if v not in _allowed_sni]
+    _tls_ja3_list = [(v, c) for (v, c) in _tls_ja3_list if v not in _allowed_ja3]
+
+    # duration
     dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
-    {
-      "sni": ["clients2.google.com", "login.microsoftonline.com", "ocsp.msocsp.com"],
-      "ja3": ["771,4865-49195-49196-49200-49202-..."]
-    }
-
-    try:
-    with open("enrichment/allowlist.json","r",encoding="utf-8") as f:
-        allow = json.load(f)
-except Exception:
-    allow = {"sni":[], "ja3":[]}
-
-allowed_sni = set(allow.get("sni", []))
-allowed_ja3 = set(allow.get("ja3", []))
-
-# filter beacon suspects
-beacons_top = [b for b in beacons_top if b["sni"] not in allowed_sni]
-
-# also trim counts
-tls_sni = [(v,c) for (v,c) in tls_sni.items() if v not in allowed_sni] if isinstance(tls_sni, dict) else tls_sni
-tls_ja3 = [(v,c) for (v,c) in tls_ja3.items() if v not in allowed_ja3] if isinstance(tls_ja3, dict) else tls_ja3
-
-def top_rare(items, k=10):
-    # items is list[(value,count)] already sorted high→low; we want the rare end
-    uniq = sorted(items, key=lambda t: t[1])[:k]
-    return uniq
-
-rare_sni  = top_rare(tls_sni if isinstance(tls_sni, list) else list(tls_sni.items()))
-rare_ja3  = top_rare(tls_ja3 if isinstance(tls_ja3, list) else list(tls_ja3.items()))
-
-    
-
-    return {
+    # build result
+    result: Dict[str, Any] = {
         "file": str(Path(path).resolve()),
         "packets": total_packets,
         "bytes": total_bytes,
@@ -355,19 +360,22 @@ rare_ja3  = top_rare(tls_ja3 if isinstance(tls_ja3, list) else list(tls_ja3.item
         "src_ips": src_ips.most_common(top_n),
         "dst_ips": dst_ips.most_common(top_n),
         "dst_ports": dst_ports.most_common(top_n),
-        "http_hosts": http_hosts.most_common(top_n),
-        "http_user_agents": http_uas.most_common(top_n),
-        "http_urls": http_urls.most_common(top_n),
-        "http_content_types": http_ctypes.most_common(top_n),
-        "tls_versions": tls_versions.most_common(top_n),
-        "tls_ciphers": tls_ciphers.most_common(top_n),
-        "tls_sni": tls_sni.most_common(top_n),
-        "tls_ja3": tls_ja3.most_common(top_n),
+        "tls_versions": list(tls_versions.items()),
+        "tls_ciphers": list(tls_ciphers.items()),
+        "tls_sni": _tls_sni_list,
+        "tls_ja3": _tls_ja3_list,
         "beacon_suspects": beacons_top,
-        "rare_tls_sni": rare_sni,
-        "rare_tls_ja3": rare_ja3,
-
     }
+
+    # attach HTTP breakdown (after counters closed)
+    result.update({
+        "http_hosts": list(http_hosts.items()),
+        "http_user_agents": list(http_uas.items()),
+        "http_urls": list(http_urls.items()),
+        "http_content_types": list(http_ctypes.items()),
+    })
+
+    return result
 
 # ---------- Output writers ----------
 def print_summary(s: Dict[str, Any]) -> None:
@@ -690,3 +698,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
