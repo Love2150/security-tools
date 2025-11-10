@@ -1,0 +1,4 @@
+{
+  "sni": ["login.microsoftonline.com", "clients2.google.com", "ocsp.msocsp.com"],
+  "ja3": []
+}
