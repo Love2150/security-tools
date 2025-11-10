@@ -1,0 +1,2 @@
+[console_scripts]
+pcap-profiler = pcap_quick_profiler:main

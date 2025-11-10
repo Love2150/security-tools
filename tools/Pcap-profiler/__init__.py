@@ -1,3 +1,5 @@
+from .pcap_profiler import main, profile_pcap  # re-export
+__all__ = ["main", "profile_pcap"]
 {
   "default_profile": "default",
   "profiles": {

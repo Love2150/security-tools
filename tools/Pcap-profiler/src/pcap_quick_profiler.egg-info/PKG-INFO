@@ -1,0 +1,12 @@
+Metadata-Version: 2.4
+Name: pcap-quick-profiler
+Version: 0.1.0
+Summary: Fast PCAP triage with DNS/TLS focus, beaconing suspects, and HTML report (dark mode).
+Author: Your Name
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pyshark>=0.6
+Requires-Dist: jinja2>=3.1
+
+﻿# PCAP Quick Profiler
+Fast PCAP triage with DNS/TLS focus, beaconing suspects, and HTML report (with dark mode).

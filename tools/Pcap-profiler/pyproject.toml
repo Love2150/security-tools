@@ -1,10 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pcap-quick-profiler"
 version = "0.1.0"
-description = "Fast PCAP triage with TLS/DNS focus and beaconing suspects"
-readme = "README.md"
+description = "Fast PCAP triage with DNS/TLS focus, beaconing suspects, and HTML report (dark mode)."
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
+authors = [{ name = "Your Name" }]
 dependencies = ["pyshark>=0.6", "jinja2>=3.1"]
 
 [project.scripts]
-pcap-profiler = "pcap_profiler:main"
+pcap-profiler = "pcap_quick_profiler:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pcap_quick_profiler*"]
+exclude = ["tests*", "out*", "reports*", "samples*"]

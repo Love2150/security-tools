@@ -1,0 +1,14 @@
+MANIFEST.in
+README.md
+pyproject.toml
+samples/capture.pcap
+samples/capture_4.pcap
+samples/qi_local_SYNACK_curl_jsonip.pcap
+src/pcap_quick_profiler/__init__.py
+src/pcap_quick_profiler/pcap_profiler.py
+src/pcap_quick_profiler.egg-info/PKG-INFO
+src/pcap_quick_profiler.egg-info/SOURCES.txt
+src/pcap_quick_profiler.egg-info/dependency_links.txt
+src/pcap_quick_profiler.egg-info/entry_points.txt
+src/pcap_quick_profiler.egg-info/requires.txt
+src/pcap_quick_profiler.egg-info/top_level.txt
