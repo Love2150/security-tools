@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # PCAP Quick Profiler (Windows-friendly)
-# Examples (PowerShell / cmd):
-#   python .\pcap_profiler.py "C:\\path\\capture.pcap"
-#   python .\pcap_profiler.py "C:\\path\\capture.pcap" --decode tcp.port==36050,http
-#   python .\pcap_profiler.py "C:\\path\\capture.pcap" --vt          (needs VT_API_KEY)
-#   python .\pcap_profiler.py "C:\\path\\capture.pcap" --no-vt       (disable VT step)
+# Examples (PowerShell / CMD):
+#   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
+#   python .\pcap_profiler.py .\samples\capture.pcap --decode tcp.port==36050,http
+#   python .\pcap_profiler.py .\samples\capture.pcap --vt      (requires VT_API_KEY)
+#   python .\pcap_profiler.py .\samples\capture.pcap --no-vt
 
 from __future__ import annotations
 
@@ -24,43 +24,30 @@ from typing import Any, Dict, List, Optional
 try:
     import pyshark  # requires TShark on PATH
 except Exception:
-    print("ERROR: pyshark not installed. Run: pip install pyshark", file=sys.stderr)
+    print("ERROR: pyshark not installed. Run: python -m pip install pyshark", file=sys.stderr)
+    print("Also install Wireshark/TShark and ensure 'tshark' is on PATH, then restart your terminal.", file=sys.stderr)
     sys.exit(1)
-    print("Also install Wireshark/TShark and ensure tshark is on PATH.", file=sys.stderr)
-    sys.exit(1)
-# ---- Fast capture helper (ADD THIS) ----
-def get_capture(pcap_path: str):
-    return pyshark.FileCapture(
-        pcap_path,
-        display_filter="tls || dns || http",  # focus on useful protocols
-        keep_packets=False,                   # don’t store packets in RAM
-        use_json=True,                        # faster parsing
-        custom_parameters=['-n']              # disable DNS name resolution
-        # , tshark_path="C:\\Program Files\\Wireshark\\tshark.exe"  # if needed on Windows
-    )
 
-# ---------- Helpers: environment & formatting ----------
+# ---------- Helpers ----------
 def ensure_tshark() -> None:
     """Exit with a friendly message if TShark isn't on PATH."""
     if shutil.which("tshark") is None:
         print(
             "ERROR: TShark not found on PATH.\n"
-            "Install Wireshark (choose 'Install TShark') and add it to PATH.\n"
-            "Then restart your terminal.",
+            "Install Wireshark (select 'Install TShark') and add it to PATH.\n"
+            "Then close and reopen your terminal.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-
 def fmt_bytes(n: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
     val = float(n)
     for u in units:
         if val < 1024:
             return f"{val:.1f} {u}"
         val /= 1024
-    return f"{val:.1f} PB"
-
+    return f"{val:.1f} EB"
 
 def safe_int(x: Any, default: int = 0) -> int:
     try:
@@ -68,20 +55,16 @@ def safe_int(x: Any, default: int = 0) -> int:
     except Exception:
         return default
 
-
-# ---------- Timestamp parsing ----------
 def _parse_iso_utc(s: str) -> Optional[datetime]:
     """Parse many common timestamp formats to UTC datetime."""
     if not s:
         return None
     s = str(s).strip()
-    # Handle trailing Z
     if s.endswith("Z"):
         try:
             return datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(timezone.utc)
         except Exception:
             pass
-    # ISO with offset, or naive
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -91,7 +74,6 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
         return dt
     except Exception:
         pass
-    # Fallbacks (no offset)
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
@@ -99,9 +81,8 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
             continue
     return None
 
-
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Best-effort way to get a packet timestamp as UTC datetime."""
+    """Best-effort to get a packet timestamp as UTC datetime."""
     dt = getattr(pkt, "sniff_time", None)
     if dt:
         try:
@@ -117,27 +98,19 @@ def safe_sniff_time(pkt) -> Optional[datetime]:
                 return parsed
     return None
 
-
 # ---------- Report path helpers ----------
 def default_reports_dir() -> Path:
-    """Default reports folder relative to current working directory."""
     return Path.cwd() / "reports" / "pcap-profiler"
 
-
 def output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path, Path]:
-    """
-    Build output file paths (JSON/TXT/CSV) in <outdir or default>/.
-    Returns (json_path, txt_path, csv_path).
-    """
     base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
     base_dir.mkdir(parents=True, exist_ok=True)
     stem = Path(pcap_path).stem
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     json_path = base_dir / f"{stem}_{ts}.json"
-    txt_path = base_dir / f"{stem}_{ts}.txt"
-    csv_path = base_dir / f"{stem}_{ts}.csv"
+    txt_path  = base_dir / f"{stem}_{ts}.txt"
+    csv_path  = base_dir / f"{stem}_{ts}.csv"
     return json_path, txt_path, csv_path
-
 
 def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path]:
     base_dir = Path(outdir).resolve() if outdir else default_reports_dir()
@@ -146,15 +119,15 @@ def vt_output_paths(pcap_path: str, outdir: Optional[str]) -> tuple[Path, Path]:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     return base_dir / f"{stem}_vt_{ts}.json", base_dir / f"{stem}_vt_{ts}.txt"
 
-
 # ---------- Core profiling ----------
 def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = None) -> Dict[str, Any]:
     ensure_tshark()
 
-    # Windows-friendly loop (no deprecated policy calls)
+    # Windows-friendly asyncio loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
+    # state / counters
     total_packets = 0
     total_bytes = 0
     first_ts: Optional[datetime] = None
@@ -165,160 +138,156 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     dst_ips = Counter()
     dst_ports = Counter()
 
-    custom_params: List[str] = []
+    # tshark params (speed first)
+    custom_params: List[str] = ['-n']   # no DNS resolution (big speedup)
     for m in (decode_maps or []):
-        custom_params += ["-d", m]
-        
-# make sure this is defined once before captures
-custom_params = ['-n']  # disable DNS resolution (speed boost)
+        custom_params += ['-d', m]      # decode-as maps, e.g. tcp.port==36050,http
 
-# --- Main pass (focus on useful protocols + faster parser)
-cap = pyshark.FileCapture(
-    path,
-    display_filter="dns || tls || http",
-    keep_packets=False,
-    use_json=True,
-    eventloop=loop,
-    custom_parameters=custom_params,
-)
-try:
-    for pkt in cap:
-        total_packets += 1
-        frame_len = safe_int(getattr(pkt.frame_info, "len", 0))
-        total_bytes += frame_len
-
-        dt = safe_sniff_time(pkt)
-        if dt:
-            if not first_ts or dt < first_ts:
-                first_ts = dt
-            if not last_ts or dt > last_ts:
-                last_ts = dt
-
-        hl = getattr(pkt, "highest_layer", "UNKNOWN")
-        proto_counter[hl] += 1
-        proto_bytes[hl] += frame_len
-
-        ip = getattr(pkt, "ip", None)
-        if ip:
-            s = getattr(ip, "src", None)
-            d = getattr(ip, "dst", None)
-            if s:
-                src_ips[s] += 1
-            if d:
-                dst_ips[d] += 1
-
-        tcp = getattr(pkt, "tcp", None)
-        udp = getattr(pkt, "udp", None)
-        if tcp:
-            p = getattr(tcp, "dstport", None)
-            if p:
-                dst_ports[p] += 1
-        elif udp:
-            p = getattr(udp, "dstport", None)
-            if p:
-                dst_ports[p] += 1
-finally:
-    cap.close()
-
-# --- HTTP pass
-http_cap = pyshark.FileCapture(
-    path,
-    display_filter="http",
-    keep_packets=False,
-    use_json=True,
-    eventloop=loop,
-    custom_parameters=custom_params,
-)
-http_hosts = Counter()
-http_uas = Counter()
-http_urls = Counter()
-http_ctypes = Counter()
-try:
-    for pkt in http_cap:
-        http = getattr(pkt, "http", None)
-        if not http:
-            continue
-        host = getattr(http, "host", None)
-        if host:
-            http_hosts[host] += 1
-        ua = getattr(http, "user_agent", None)
-        if ua:
-            http_uas[ua] += 1
-        full = getattr(http, "request_full_uri", None)
-        if full:
-            http_urls[full] += 1
-        else:
-            uri = getattr(http, "request_uri", None)
-            if host and uri:
-                http_urls[f"http://{host}{uri}"] += 1
-        ctype = getattr(http, "content_type", None)
-        if ctype:
-            http_ctypes[ctype] += 1
-finally:
-    http_cap.close()
-
-# --- TLS pass (handshakes-only is faster: use "tls.handshake" if you like)
-tls_cap = pyshark.FileCapture(
-    path,
-    display_filter="tls",           # or "tls.handshake"
-    keep_packets=False,
-    use_json=True,
-    eventloop=loop,
-    custom_parameters=custom_params,
-)
-tls_versions = Counter()
-tls_ciphers = Counter()
-tls_sni = Counter()
-tls_ja3 = Counter()
-try:
-    for pkt in tls_cap:
-        tls = getattr(pkt, "tls", None)
-        if not tls:
-            continue
-        v = getattr(tls, "handshake_version", None)
-        if v:
-            tls_versions[v] += 1
-        cs = getattr(tls, "handshake_ciphersuite", None)
-        if cs:
-            tls_ciphers[cs] += 1
-        sni = getattr(tls, "handshake_extensions_server_name", None)
-        if sni:
-            tls_sni[sni] += 1
-        ja3 = getattr(tls, "handshake_ja3", None)
-        if ja3:
-            tls_ja3[ja3] += 1
-finally:
-    tls_cap.close()
+    # --- Main pass (limit to useful protocols; faster JSON parser) ---
+    cap = pyshark.FileCapture(
+        path,
+        display_filter="dns || tls || http",
+        keep_packets=False,
+        use_json=True,
+        eventloop=loop,
+        custom_parameters=custom_params,
+    )
     try:
-        loop.close()
-    except Exception:
-        pass
+        for pkt in cap:
+            total_packets += 1
+            frame_len = safe_int(getattr(pkt.frame_info, "len", 0))
+            total_bytes += frame_len
 
-dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
+            dt = safe_sniff_time(pkt)
+            if dt:
+                if not first_ts or dt < first_ts:
+                    first_ts = dt
+                if not last_ts or dt > last_ts:
+                    last_ts = dt
 
-return {
-    "file": str(Path(path).resolve()),
-    "packets": total_packets,
-    "bytes": total_bytes,
-    "start": first_ts.isoformat() if first_ts else None,
-    "end": last_ts.isoformat() if last_ts else None,
-    "duration": dur,
-    "protocols": proto_counter.most_common(),
-    "bytes_by_protocol": proto_bytes.most_common(),
-    "src_ips": src_ips.most_common(top_n),
-    "dst_ips": dst_ips.most_common(top_n),
-    "dst_ports": dst_ports.most_common(top_n),
-    "http_hosts": http_hosts.most_common(top_n),
-    "http_user_agents": http_uas.most_common(top_n),
-    "http_urls": http_urls.most_common(top_n),
-    "http_content_types": http_ctypes.most_common(top_n),
-    "tls_versions": tls_versions.most_common(top_n),
-    "tls_ciphers": tls_ciphers.most_common(top_n),
-    "tls_sni": tls_sni.most_common(top_n),
-    "tls_ja3": tls_ja3.most_common(top_n),
-}
+            hl = getattr(pkt, "highest_layer", "UNKNOWN")
+            proto_counter[hl] += 1
+            proto_bytes[hl] += frame_len
 
+            ip = getattr(pkt, "ip", None)
+            if ip:
+                s = getattr(ip, "src", None)
+                d = getattr(ip, "dst", None)
+                if s:
+                    src_ips[s] += 1
+                if d:
+                    dst_ips[d] += 1
 
+            tcp = getattr(pkt, "tcp", None)
+            udp = getattr(pkt, "udp", None)
+            if tcp:
+                p = getattr(tcp, "dstport", None)
+                if p:
+                    dst_ports[p] += 1
+            elif udp:
+                p = getattr(udp, "dstport", None)
+                if p:
+                    dst_ports[p] += 1
+    finally:
+        cap.close()
+
+    # --- HTTP pass (details) ---
+    http_cap = pyshark.FileCapture(
+        path,
+        display_filter="http",
+        keep_packets=False,
+        use_json=True,
+        eventloop=loop,
+        custom_parameters=custom_params,
+    )
+    http_hosts = Counter()
+    http_uas = Counter()
+    http_urls = Counter()
+    http_ctypes = Counter()
+    try:
+        for pkt in http_cap:
+            http = getattr(pkt, "http", None)
+            if not http:
+                continue
+            host = getattr(http, "host", None)
+            if host:
+                http_hosts[host] += 1
+            ua = getattr(http, "user_agent", None)
+            if ua:
+                http_uas[ua] += 1
+            full = getattr(http, "request_full_uri", None)
+            if full:
+                http_urls[full] += 1
+            else:
+                uri = getattr(http, "request_uri", None)
+                if host and uri:
+                    http_urls[f"http://{host}{uri}"] += 1
+            ctype = getattr(http, "content_type", None)
+            if ctype:
+                http_ctypes[ctype] += 1
+    finally:
+        http_cap.close()
+
+    # --- TLS pass (handshakes-only is faster: use "tls.handshake" if desired) ---
+    tls_cap = pyshark.FileCapture(
+        path,
+        display_filter="tls",   # or "tls.handshake"
+        keep_packets=False,
+        use_json=True,
+        eventloop=loop,
+        custom_parameters=custom_params,
+    )
+    tls_versions = Counter()
+    tls_ciphers = Counter()
+    tls_sni = Counter()
+    tls_ja3 = Counter()
+    try:
+        for pkt in tls_cap:
+            tls = getattr(pkt, "tls", None)
+            if not tls:
+                continue
+            v = getattr(tls, "handshake_version", None)
+            if v:
+                tls_versions[v] += 1
+            cs = getattr(tls, "handshake_ciphersuite", None)
+            if cs:
+                tls_ciphers[cs] += 1
+            sni = getattr(tls, "handshake_extensions_server_name", None)
+            if sni:
+                tls_sni[sni] += 1
+            ja3 = getattr(tls, "handshake_ja3", None)
+            if ja3:
+                tls_ja3[ja3] += 1
+    finally:
+        tls_cap.close()
+        try:
+            loop.close()
+        except Exception:
+            pass
+
+    dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
+
+    return {
+        "file": str(Path(path).resolve()),
+        "packets": total_packets,
+        "bytes": total_bytes,
+        "start": first_ts.isoformat() if first_ts else None,
+        "end": last_ts.isoformat() if last_ts else None,
+        "duration": dur,
+        "protocols": proto_counter.most_common(),
+        "bytes_by_protocol": proto_bytes.most_common(),
+        "src_ips": src_ips.most_common(top_n),
+        "dst_ips": dst_ips.most_common(top_n),
+        "dst_ports": dst_ports.most_common(top_n),
+        "http_hosts": http_hosts.most_common(top_n),
+        "http_user_agents": http_uas.most_common(top_n),
+        "http_urls": http_urls.most_common(top_n),
+        "http_content_types": http_ctypes.most_common(top_n),
+        "tls_versions": tls_versions.most_common(top_n),
+        "tls_ciphers": tls_ciphers.most_common(top_n),
+        "tls_sni": tls_sni.most_common(top_n),
+        "tls_ja3": tls_ja3.most_common(top_n),
+    }
 
 # ---------- Output writers ----------
 def print_summary(s: Dict[str, Any]) -> None:
@@ -356,11 +325,9 @@ def print_summary(s: Dict[str, Any]) -> None:
     show("🔐 TLS SNI", s["tls_sni"])
     show("🔐 TLS JA3", s["tls_ja3"])
 
-
 def write_json(path: str, data: Dict[str, Any]) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-
 
 def write_csv(path: str, data: Dict[str, Any]) -> None:
     rows = []
@@ -375,7 +342,6 @@ def write_csv(path: str, data: Dict[str, Any]) -> None:
         w.writeheader()
         w.writerows(rows)
 
-
 # ---------- Optional VirusTotal integration ----------
 def maybe_run_vt_check(
     profiler_json_path: Path,
@@ -384,12 +350,6 @@ def maybe_run_vt_check(
     force: bool = False,
     disable: bool = False,
 ) -> None:
-    """
-    If VT_API_KEY is set (or --vt passed), call vt_check_ips.py in same folder:
-      - extracts IPs from profiler JSON
-      - queries VirusTotal
-      - saves VT JSON/TXT next to other reports
-    """
     if disable:
         print("[vt] Skipping VT check (--no-vt).")
         return
@@ -421,36 +381,26 @@ def maybe_run_vt_check(
     except Exception as e:
         print(f"[vt] Error during VT check: {e}", file=sys.stderr)
 
-
 # ---------- CLI ----------
 def main():
-    ap = argparse.ArgumentParser(
-        description="PCAP Quick Profiler — fast triage of network captures (Windows-friendly)."
-    )
+    ap = argparse.ArgumentParser(description="PCAP Quick Profiler — fast triage of network captures (Windows-friendly).")
     ap.add_argument("pcap", help="Path to .pcap or .pcapng file")
     ap.add_argument("--top", type=int, default=10, help="Top-N entries per category (default: 10)")
-    ap.add_argument(
-        "--decode",
-        action="append",
-        default=[],
-        help="Decode-as mapping, e.g. tcp.port==36050,http (repeatable)",
-    )
+    ap.add_argument("--decode", action="append", default=[], help="Decode-as mapping, e.g. tcp.port==36050,http (repeatable)")
     ap.add_argument("--json", help="Also write summary to this JSON path (optional)")
     ap.add_argument("--csv", help="Also write CSV of top IPs/ports to this path (optional)")
     ap.add_argument("--outdir", help="Directory to auto-save JSON/TXT/CSV (default: reports/pcap-profiler)")
     ap.add_argument("--vt", action="store_true", help="Force run VirusTotal check (requires VT_API_KEY)")
     ap.add_argument("--no-vt", action="store_true", help="Disable automatic VirusTotal check")
-
     args = ap.parse_args()
 
-    # Build final decode-as list
-    decode_maps = list(dict.fromkeys(args.decode or []))
+    decode_maps = list(dict.fromkeys(args.decode or []))  # dedupe
 
     try:
-        # 1) Run profiler
+        # 1) Profile
         result = profile_pcap(args.pcap, args.top, decode_maps)
 
-        # 2) Print to console
+        # 2) Console summary
         print_summary(result)
 
         # 3) Auto-save JSON/TXT/CSV
@@ -458,9 +408,7 @@ def main():
         write_json(str(json_path), result)
         print(f"[save] JSON  -> {json_path}")
 
-        # save same console summary to TXT
         from io import StringIO
-
         buf = StringIO()
         orig_stdout = sys.stdout
         try:
@@ -475,7 +423,7 @@ def main():
         write_csv(str(csv_path), result)
         print(f"[save] CSV   -> {csv_path}")
 
-        # 4) Optional extra outputs if user asked
+        # 4) Optional single-file outputs
         if args.json:
             write_json(args.json, result)
             print(f"[save] JSON(extra) -> {args.json}")
@@ -483,7 +431,7 @@ def main():
             write_csv(args.csv, result)
             print(f"[save] CSV(extra)  -> {args.csv}")
 
-        # 5) Optional VirusTotal step
+        # 5) Optional VT
         maybe_run_vt_check(
             profiler_json_path=json_path,
             pcap_path=args.pcap,
@@ -498,7 +446,7 @@ def main():
         print(f"ERROR while profiling PCAP: {e}", file=sys.stderr)
         sys.exit(1)
 
-
 if __name__ == "__main__":
     main()
+
 
