@@ -312,6 +312,37 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
 
     dur = (last_ts - first_ts).total_seconds() if first_ts and last_ts else 0.0
 
+    {
+      "sni": ["clients2.google.com", "login.microsoftonline.com", "ocsp.msocsp.com"],
+      "ja3": ["771,4865-49195-49196-49200-49202-..."]
+    }
+
+    try:
+    with open("enrichment/allowlist.json","r",encoding="utf-8") as f:
+        allow = json.load(f)
+except Exception:
+    allow = {"sni":[], "ja3":[]}
+
+allowed_sni = set(allow.get("sni", []))
+allowed_ja3 = set(allow.get("ja3", []))
+
+# filter beacon suspects
+beacons_top = [b for b in beacons_top if b["sni"] not in allowed_sni]
+
+# also trim counts
+tls_sni = [(v,c) for (v,c) in tls_sni.items() if v not in allowed_sni] if isinstance(tls_sni, dict) else tls_sni
+tls_ja3 = [(v,c) for (v,c) in tls_ja3.items() if v not in allowed_ja3] if isinstance(tls_ja3, dict) else tls_ja3
+
+def top_rare(items, k=10):
+    # items is list[(value,count)] already sorted high→low; we want the rare end
+    uniq = sorted(items, key=lambda t: t[1])[:k]
+    return uniq
+
+rare_sni  = top_rare(tls_sni if isinstance(tls_sni, list) else list(tls_sni.items()))
+rare_ja3  = top_rare(tls_ja3 if isinstance(tls_ja3, list) else list(tls_ja3.items()))
+
+    
+
     return {
         "file": str(Path(path).resolve()),
         "packets": total_packets,
@@ -333,6 +364,9 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         "tls_sni": tls_sni.most_common(top_n),
         "tls_ja3": tls_ja3.most_common(top_n),
         "beacon_suspects": beacons_top,
+        "rare_tls_sni": rare_sni,
+        "rare_tls_ja3": rare_ja3,
+
     }
 
 # ---------- Output writers ----------
