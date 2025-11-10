@@ -82,21 +82,38 @@ def _parse_iso_utc(s: str) -> Optional[datetime]:
     return None
 
 def safe_sniff_time(pkt) -> Optional[datetime]:
-    """Best-effort to get a packet timestamp as UTC datetime."""
-    dt = getattr(pkt, "sniff_time", None)
-    if dt:
-        try:
-            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-        except Exception:
-            pass
-    fi = getattr(pkt, "frame_info", None)
-    if fi:
-        human = getattr(fi, "time", None)
-        if human:
-            parsed = _parse_iso_utc(str(human))
+    """Return a UTC datetime for the packet, robust to JSON/csvpyshark quirks."""
+    try:
+        fi = getattr(pkt, "frame_info", None)
+        # 1) Best: epoch seconds (always numeric)
+        if fi:
+            epoch = getattr(fi, "time_epoch", None)
+            if epoch is not None:
+                try:
+                    return datetime.fromtimestamp(float(str(epoch)), tz=timezone.utc)
+                except Exception:
+                    pass
+
+        # 2) If PyShark already gave a datetime
+        dt = getattr(pkt, "sniff_time", None)
+        if isinstance(dt, datetime):
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        if dt:
+            parsed = _parse_iso_utc(str(dt))
             if parsed:
                 return parsed
+
+        # 3) Human string (e.g., "2025-10-08T20:20:28")
+        if fi:
+            human = getattr(fi, "time", None)
+            if human:
+                parsed = _parse_iso_utc(str(human))
+                if parsed:
+                    return parsed
+    except Exception:
+        pass
     return None
+
 
 # ---------- Report path helpers ----------
 def default_reports_dir() -> Path:
