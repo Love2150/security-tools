@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Windows Log Triage Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#0b1020; --card:#121934; --text:#e5e7eb; --muted:#9ca3af;
+  --accent:#60a5fa; --accent2:#a78bfa; --border:#1f2a4d;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f8fafc;--card:#fff;--text:#0f172a;--muted:#475569;--border:#e2e8f0}
+}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+.container{width:min(1100px,92%);margin:24px auto}
+h1,h2{line-height:1.2;margin:.2rem 0 .6rem}
+h1{font-size:1.6rem} h2{font-size:1.2rem}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin:12px 0}
+.meta{color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid var(--border);padding:8px 6px;vertical-align:top}
+kbd{padding:.05rem .35rem;border:1px solid var(--border);border-bottom-width:2px;border-radius:6px;background:rgba(255,255,255,.05)}
+.tag{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:.1rem .4rem;margin:.05rem .25rem .05rem 0;color:var(--muted);font-size:.8rem}
+.small{font-size:.9rem}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width: 900px){.grid{grid-template-columns:1fr}}
+pre{white-space:pre-wrap;word-break:break-word;background:#0f142d;padding:8px;border-radius:8px;border:1px solid var(--border)}
+header{display:flex;justify-content:space-between;align-items:center;margin:8px 0 12px}
+.btn{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:.35rem .7rem;color:var(--text);text-decoration:none}
+.btn:hover{border-color:var(--accent)}
+.count{font-weight:700}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Windows Log Triage Report</h1>
+    <a class="btn" href="#" onclick="history.back();return false;">← Back</a>
+  </header>
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <div><span class="meta">Events:</span> <span class="count">19</span></div>
+        <div><span class="meta">Time span:</span> 2019-01-20T07:00:50.800224+00:00 → 2023-01-24T11:54:42.899994+00:00</div>
+        <div class="small meta">Generated: 2025-11-12 20:57:25 UTC</div>
+      </div>
+      <div>
+        <div class="meta">Top Providers</div>
+        
+          <span class="tag">Microsoft-Windows-Security-Auditing (14)</span>
+        
+          <span class="tag">Microsoft-Windows-Sysmon (4)</span>
+        
+          <span class="tag">Microsoft-Windows-Eventlog (1)</span>
+        
+      </div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Top Processes</h2>
+      
+      <table><thead><tr><th>Image</th><th>Count</th></tr></thead>
+      <tbody>
+      
+        <tr><td>system</td><td>4</td></tr>
+      
+      </tbody></table>
+      
+    </div>
+
+    <div class="card">
+      <h2>Top Parents</h2>
+      <p class="meta">No parent data.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Network by Process</h2>
+    
+    <table><thead><tr><th>Process</th><th>Destination</th><th>Hits</th></tr></thead>
+    <tbody>
+    
+      <tr><td>system</td><td>10.59.4.20:49304</td><td>1</td></tr>
+    
+      <tr><td>system</td><td>10.59.4.20:49306</td><td>1</td></tr>
+    
+    </tbody></table>
+    
+  </div>
+
+  <div class="card">
+    <h2>Sigma-like Rule Hits</h2>
+    <p class="meta">No matches in this dataset.</p>
+  </div>
+
+  <div class="card">
+    <h2>Suspicious Command Lines (heuristics)</h2>
+    
+      <p class="meta">None flagged.</p>
+    
+  </div>
+
+  <div class="card">
+    <h2>IOCs</h2>
+    <div class="grid">
+      <div>
+        <div class="meta">Domains</div>
+        <div class="small">01566s-win16-ir.threebeesco.com</div><div class="small">DC1.insecurebank.local</div><div class="small">WIN-77LTAPHIQ1R.example.corp</div><div class="small">net1.exe</div>
+        
+        <div class="meta" style="margin-top:8px">URLs</div>
+        
+        <div class="meta small">none</div>
+      </div>
+      <div>
+        <div class="meta">IPv4</div>
+        <div class="small">10.0.2.17</div><div class="small">10.0.2.18</div><div class="small">10.59.4.11</div><div class="small">10.59.4.20</div>
+        
+        <div class="meta" style="margin-top:8px">Hashes/Emails</div>
+        
+        
+        
+        
+        <div class="meta small">none</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Sample Events (first 25)</h2>
+    
+    <table><thead><tr><th>Time</th><th>Provider</th><th>EID</th><th>Process</th><th>Cmd</th></tr></thead>
+    <tbody>
+    
+      <tr>
+        <td class="small">2023-01-24T11:52:02.155027+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>4799</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2023-01-24T11:53:14.399050+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>4799</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2023-01-24T11:54:02.416491+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>4799</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2023-01-24T11:54:18.001638+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>4799</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2023-01-24T11:54:42.899994+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>4799</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:00:50.800224+00:00</td>
+        <td class="small">Microsoft-Windows-Eventlog</td>
+        <td>1102</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:00:56.784849+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:01:20.972601+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:01:41.206379+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.409321+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.424917+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.440693+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.472383+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.503201+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-01-20T07:02:45.550112+00:00</td>
+        <td class="small">Microsoft-Windows-Security-Auditing</td>
+        <td>5145</td>
+        <td class="small"></td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-05-14T17:42:52.833387+00:00</td>
+        <td class="small">Microsoft-Windows-Sysmon</td>
+        <td>18</td>
+        <td class="small">system</td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-05-14T17:42:52.848383+00:00</td>
+        <td class="small">Microsoft-Windows-Sysmon</td>
+        <td>18</td>
+        <td class="small">system</td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-05-14T17:42:53.854380+00:00</td>
+        <td class="small">Microsoft-Windows-Sysmon</td>
+        <td>3</td>
+        <td class="small">system</td>
+        <td><pre></pre></td>
+      </tr>
+    
+      <tr>
+        <td class="small">2019-05-14T17:43:03.888378+00:00</td>
+        <td class="small">Microsoft-Windows-Sysmon</td>
+        <td>3</td>
+        <td class="small">system</td>
+        <td><pre></pre></td>
+      </tr>
+    
+    </tbody></table>
+    
+  </div>
+
+  <p class="meta small">© 2025 Brandon Love · Windows Log Triage (MVP)</p>
+</div>
+</body></html>

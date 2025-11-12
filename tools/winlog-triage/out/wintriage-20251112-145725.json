@@ -1,0 +1,190 @@
+{
+  "count": 19,
+  "first_ts": "2019-01-20T07:00:50.800224+00:00",
+  "last_ts": "2023-01-24T11:54:42.899994+00:00",
+  "providers": {
+    "Microsoft-Windows-Security-Auditing": 14,
+    "Microsoft-Windows-Sysmon": 4,
+    "Microsoft-Windows-Eventlog": 1
+  },
+  "event_ids": {
+    "5145": 9,
+    "4799": 5,
+    "18": 2,
+    "3": 2,
+    "1102": 1
+  },
+  "top_processes": {
+    "system": 4
+  },
+  "top_parents": {},
+  "suspicious_cmd": [],
+  "net_by_process": [
+    {
+      "process": "system",
+      "dst": "10.59.4.20:49304",
+      "count": 1
+    },
+    {
+      "process": "system",
+      "dst": "10.59.4.20:49306",
+      "count": 1
+    }
+  ],
+  "persistence": [],
+  "rule_hits": [],
+  "iocs": {
+    "urls": [],
+    "domains": [
+      "01566s-win16-ir.threebeesco.com",
+      "DC1.insecurebank.local",
+      "WIN-77LTAPHIQ1R.example.corp",
+      "net1.exe"
+    ],
+    "ipv4": [
+      "10.0.2.17",
+      "10.0.2.18",
+      "10.59.4.11",
+      "10.59.4.20"
+    ],
+    "md5": [],
+    "sha1": [],
+    "sha256": [],
+    "emails": []
+  },
+  "sample": [
+    {
+      "ts": "2023-01-24T11:52:02.155027+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 4799,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2023-01-24T11:53:14.399050+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 4799,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2023-01-24T11:54:02.416491+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 4799,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2023-01-24T11:54:18.001638+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 4799,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2023-01-24T11:54:42.899994+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 4799,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:00:50.800224+00:00",
+      "provider": "Microsoft-Windows-Eventlog",
+      "eid": 1102,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:00:56.784849+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:01:20.972601+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:01:41.206379+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.409321+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.424917+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.440693+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.472383+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.503201+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-01-20T07:02:45.550112+00:00",
+      "provider": "Microsoft-Windows-Security-Auditing",
+      "eid": 5145,
+      "image": "",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-05-14T17:42:52.833387+00:00",
+      "provider": "Microsoft-Windows-Sysmon",
+      "eid": 18,
+      "image": "system",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-05-14T17:42:52.848383+00:00",
+      "provider": "Microsoft-Windows-Sysmon",
+      "eid": 18,
+      "image": "system",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-05-14T17:42:53.854380+00:00",
+      "provider": "Microsoft-Windows-Sysmon",
+      "eid": 3,
+      "image": "system",
+      "cmd": ""
+    },
+    {
+      "ts": "2019-05-14T17:43:03.888378+00:00",
+      "provider": "Microsoft-Windows-Sysmon",
+      "eid": 3,
+      "image": "system",
+      "cmd": ""
+    }
+  ]
+}

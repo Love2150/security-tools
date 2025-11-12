@@ -568,8 +568,53 @@ def collect_events(paths: List[str], max_per_file: Optional[int]) -> Iterable[Di
 
 
 def write_json(path: str, data: Dict[str, Any]) -> None:
+    """
+    Make a JSON-safe copy of the summary:
+      - Counters -> dict (or list of rows)
+      - tuple keys (net_by_process) -> list of {process,dst,count}
+      - sets in IOCs -> sorted lists
+    """
+    from collections import Counter
+
+    def to_dict_counter(c: Counter, top=None):
+        items = c.most_common(top) if hasattr(c, "most_common") else list(c.items())
+        return {str(k): v for k, v in items}
+
+    safe = dict(data)  # shallow copy
+
+    # 1) net_by_process (tuple keys) -> list of rows
+    nbp = safe.get("net_by_process")
+    if isinstance(nbp, Counter):
+        safe["net_by_process"] = [
+            {"process": k[0], "dst": k[1], "count": v}
+            for k, v in nbp.most_common()
+        ]
+    elif isinstance(nbp, dict):
+        # in case it somehow already became a dict with tuple keys
+        rows = []
+        for k, v in nbp.items():
+            if isinstance(k, tuple) and len(k) == 2:
+                rows.append({"process": k[0], "dst": k[1], "count": v})
+        safe["net_by_process"] = rows
+
+    # 2) Regular Counters -> plain dicts
+    for key in ("providers", "event_ids", "top_processes", "top_parents"):
+        val = safe.get(key)
+        if isinstance(val, Counter):
+            safe[key] = to_dict_counter(val)
+
+    # 3) IOCs (sets -> sorted lists)
+    iocs = safe.get("iocs")
+    if isinstance(iocs, dict):
+        safe["iocs"] = {
+            k: sorted(list(v)) if isinstance(v, set) else v
+            for k, v in iocs.items()
+        }
+
+    # Everything else should already be JSON-safe (lists/dicts/strings/ints)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+        json.dump(safe, f, indent=2)
+
 
 
 def write_csv(path: str, sample_events: List[Dict[str, Any]]) -> None:

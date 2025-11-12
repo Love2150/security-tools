@@ -1,0 +1,22 @@
+{
+  "count": 19,
+  "first_ts": "2019-01-20T07:00:50.800224+00:00",
+  "last_ts": "2023-01-24T11:54:42.899994+00:00",
+  "providers": {
+    "Microsoft-Windows-Security-Auditing": 14,
+    "Microsoft-Windows-Eventlog": 1,
+    "Microsoft-Windows-Sysmon": 4
+  },
+  "event_ids": {
+    "4799": 5,
+    "1102": 1,
+    "5145": 9,
+    "18": 2,
+    "3": 2
+  },
+  "top_processes": {
+    "system": 4
+  },
+  "top_parents": {},
+  "suspicious_cmd": [],
+  "net_by_process": {
