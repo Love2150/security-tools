@@ -2,3 +2,13 @@
   "sni": ["login.microsoftonline.com", "clients2.google.com", "ocsp.msocsp.com"],
   "ja3": []
 }
+{
+  "sni": [
+    "ctldl.windowsupdate.com",
+    "ocsp.digicert.com",
+    "x1.c.lencr.org",
+    "r3.o.lencr.org",
+    "crl.identrust.com"
+  ],
+  "ja3": []
+}
