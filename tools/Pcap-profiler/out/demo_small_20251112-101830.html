@@ -1,0 +1,120 @@
+
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>PCAP Quick Profiler — Report</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  --ink:#0f172a; --bg:#ffffff; --muted:#475569; --line:#e2e8f0; --accent:#2563eb;
+  --card:#ffffff; --shadow:0 1px 0 rgba(2,6,23,.03);
+}
+:root.dark{
+  --ink:#e5e7eb; --bg:#0b1220; --muted:#9aa4b2; --line:#1f2937; --accent:#60a5fa;
+  --card:#0f172a; --shadow:0 0 0 rgba(0,0,0,0);
+}
+html,body{height:100%}
+body{font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif;margin:24px;color:var(--ink);background:var(--bg);transition:background .2s,color .2s}
+h1{font-size:1.4rem;margin:0}
+.meta{color:var(--muted);font-size:.92rem}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;margin:16px 0;box-shadow:var(--shadow);background:var(--card)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+table{border-collapse:collapse;width:100%}
+th,td{border:1px solid var(--line);padding:8px;text-align:left;vertical-align:top}
+th{background:rgba(2,6,23,.03)}
+:root.dark th{background:rgba(255,255,255,.05)}
+small{color:var(--muted)}
+.code{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:6px 12px;font-size:.9rem;cursor:pointer}
+.btn:hover{filter:brightness(1.05)}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+.badge{background:#eff6ff;color:#1d4ed8;padding:2px 8px;border-radius:999px;font-size:.8rem}
+:root.dark .badge{background:#172554;color:#93c5fd}
+</style>
+<script>
+(function(){
+  const saved = localStorage.getItem('pp-dark') || 'auto';
+  const prefers = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const isDark = saved==='dark' || (saved==='auto' && prefers);
+  if(isDark) document.documentElement.classList.add('dark');
+  window.__ppMode = saved;
+})();
+function toggleMode(){
+  const root = document.documentElement;
+  const nowDark = root.classList.toggle('dark');
+  const mode = nowDark ? 'dark' : 'light';
+  localStorage.setItem('pp-dark', mode);
+  const btn = document.getElementById('modeBtn');
+  if(btn) btn.textContent = nowDark ? '☀️ Light' : '🌙 Dark';
+}
+function initModeBtn(){
+  const btn = document.getElementById('modeBtn');
+  const isDark = document.documentElement.classList.contains('dark');
+  btn.textContent = isDark ? '☀️ Light' : '🌙 Dark';
+}
+</script>
+</head><body onload="initModeBtn()">
+<div class="toolbar">
+  <div>
+    <strong>PCAP Quick Profiler — Report</strong><br>
+    <small class="meta">Generated: 2025-11-12 16:18:30 UTC</small>
+  </div>
+  <div><button id="modeBtn" class="btn" onclick="toggleMode()">🌙 Dark</button></div>
+</div>
+
+<div class="card">
+  <p class="meta">File: <span class="code">C:\Users\brand\Desktop\Projects\security-tools\tools\Pcap-profiler\samples\demo_small.pcap</span><br>
+  Window: ? → ? · Duration: 0.00s · Packets: 250 · Bytes: 198,152</p>
+</div>
+
+<div class="card grid">
+  <div><strong>Top Source IPs</strong><br><small>count</small>
+    <table><tr><td>10.10.0.20</td><td>99</td></tr><tr><td>104.80.224.57</td><td>63</td></tr><tr><td>20.190.160.132</td><td>22</td></tr><tr><td>108.167.165.249</td><td>21</td></tr><tr><td>8.8.8.8</td><td>14</td></tr><tr><td>52.109.12.18</td><td>8</td></tr><tr><td>13.107.42.16</td><td>7</td></tr><tr><td>52.109.76.68</td><td>4</td></tr><tr><td>104.110.191.177</td><td>3</td></tr><tr><td>51.105.71.136</td><td>3</td></tr></table>
+  </div>
+  <div><strong>Top Destination IPs</strong><br><small>count</small>
+    <table><tr><td>10.10.0.20</td><td>151</td></tr><tr><td>20.190.160.132</td><td>30</td></tr><tr><td>104.80.224.57</td><td>15</td></tr><tr><td>108.167.165.249</td><td>15</td></tr><tr><td>8.8.8.8</td><td>14</td></tr><tr><td>52.109.12.18</td><td>6</td></tr><tr><td>51.105.71.136</td><td>4</td></tr><tr><td>52.109.76.68</td><td>3</td></tr><tr><td>13.107.42.16</td><td>3</td></tr><tr><td>104.110.191.177</td><td>3</td></tr></table>
+  </div>
+  <div><strong>Top Destination Ports</strong><br><small>count</small>
+    <table><tr><td>443</td><td>76</td></tr><tr><td>56190</td><td>20</td></tr><tr><td>56228</td><td>15</td></tr><tr><td>56230</td><td>15</td></tr><tr><td>53</td><td>14</td></tr><tr><td>56229</td><td>13</td></tr><tr><td>56185</td><td>11</td></tr><tr><td>80</td><td>9</td></tr><tr><td>56054</td><td>7</td></tr><tr><td>56181</td><td>7</td></tr></table>
+  </div>
+</div>
+
+<div class="card grid">
+  <div><strong>TLS SNI</strong>
+    <table><tr><td colspan="2"><small>(none)</small></td></tr></table>
+  </div>
+  <div><strong>TLS JA3</strong>
+    <table><tr><td colspan="2"><small>(none)</small></td></tr></table>
+  </div>
+  <div><strong>Protocols</strong>
+    <table><tr><td>TLS</td><td>198</td></tr><tr><td>DNS</td><td>28</td></tr><tr><td>HTTP</td><td>12</td></tr><tr><td>TCP.SEGMENTS</td><td>6</td></tr><tr><td>OCSP</td><td>5</td></tr><tr><td>CERTIFICATE REVOCATION LIST</td><td>1</td></tr></table>
+  </div>
+</div>
+
+<div class="card">
+  <strong>🚨 Beaconing suspects</strong> <span class="badge">experimental</span>
+  <table>
+    <tr><th>Destination</th><th>SNI</th><th>Hits</th><th>Avg Interval (s)</th><th>Score</th></tr>
+    
+    
+      <tr><td colspan="5"><small>(none)</small></td></tr>
+    
+  </table>
+  <small>Score is based on periodicity (lower inter-arrival variance → higher score).</small>
+</div>
+
+<div class="card grid">
+  <div><strong>HTTP Hosts</strong>
+    <table><tr><td>ctldl.windowsupdate.com</td><td>2</td></tr><tr><td>ocsp.digicert.com</td><td>2</td></tr><tr><td>crl.identrust.com</td><td>1</td></tr><tr><td>x1.c.lencr.org</td><td>1</td></tr><tr><td>r3.o.lencr.org</td><td>3</td></tr></table>
+  </div>
+  <div><strong>HTTP User-Agents</strong>
+    <table><tr><td>Microsoft-CryptoAPI/10.0</td><td>9</td></tr></table>
+  </div>
+  <div><strong>HTTP URLs</strong>
+    <table><tr><td colspan="2"><small>(none)</small></td></tr></table>
+  </div>
+</div>
+
+</body></html>
