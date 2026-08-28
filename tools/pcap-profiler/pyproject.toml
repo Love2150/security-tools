@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pcap-quick-profiler"
+version = "0.1.0"
+description = "Fast PCAP triage with complete baseline statistics and focused HTTP and TLS analysis."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+authors = [{ name = "Brandon Love" }]
+dependencies = [
+  "jinja2>=3.1",
+  "pyshark>=0.6",
+  "requests>=2.31",
+]
+
+[project.scripts]
+pcap-profiler = "pcap_quick_profiler.pcap_profiler:main"
+pcap-profiler-vt = "pcap_quick_profiler.virustotal:main"
+
+[project.urls]
+Repository = "https://github.com/Love2150/security-tools"
+Issues = "https://github.com/Love2150/security-tools/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pcap_quick_profiler*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+pcap_quick_profiler = ["enrichment/*.json"]

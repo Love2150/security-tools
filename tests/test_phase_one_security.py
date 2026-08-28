@@ -9,11 +9,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PCAP_MODULES = (
-    ROOT / "tools/Pcap-profiler/pcap_profiler.py",
-    ROOT / "tools/Pcap-profiler/src/pcap_quick_profiler/pcap_profiler.py",
+    ROOT / "tools/pcap-profiler/src/pcap_quick_profiler/pcap_profiler.py",
 )
 WINLOG_MODULE = ROOT / "tools/winlog-triage/wintriage.py"
-VT_MODULE = ROOT / "tools/Pcap-profiler/vt_check_ips.py"
+VT_MODULE = ROOT / "tools/pcap-profiler/src/pcap_quick_profiler/virustotal.py"
 
 
 def load_module(path: Path, name: str):

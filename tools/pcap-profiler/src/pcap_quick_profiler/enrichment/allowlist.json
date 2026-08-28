@@ -1,0 +1,13 @@
+{
+  "sni": [
+    "clients2.google.com",
+    "crl.identrust.com",
+    "ctldl.windowsupdate.com",
+    "login.microsoftonline.com",
+    "ocsp.digicert.com",
+    "ocsp.msocsp.com",
+    "r3.o.lencr.org",
+    "x1.c.lencr.org"
+  ],
+  "ja3": []
+}

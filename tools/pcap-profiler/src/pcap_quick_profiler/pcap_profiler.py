@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # PCAP Quick Profiler (Windows-friendly) with HTML report + Dark Mode + Allowlist
-# Usage:
-#   python .\pcap_profiler.py .\samples\capture.pcap --outdir .\out
+# Usage: pcap-profiler capture.pcap --outdir reports
 
 from __future__ import annotations
 
@@ -613,10 +612,9 @@ def maybe_run_vt_check(
         return
 
     try:
-        import importlib
-        vt = importlib.import_module("vt_check_ips")
-    except Exception:
-        print("[vt] vt_check_ips.py not found or import failed; skipping VT check.")
+        from . import virustotal as vt
+    except ImportError:
+        print("[vt] VirusTotal support is unavailable; reinstall the package.")
         return
 
     try:
