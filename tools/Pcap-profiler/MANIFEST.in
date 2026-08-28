@@ -1,4 +1,0 @@
-include README.md
-recursive-include samples *.pcap *.pcapng *.md
-exclude out/*
-exclude reports/*

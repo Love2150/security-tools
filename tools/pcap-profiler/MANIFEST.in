@@ -1,0 +1,7 @@
+include README.md
+prune samples
+prune out
+prune reports
+prune dist
+global-exclude *.py[cod]
+global-exclude __pycache__

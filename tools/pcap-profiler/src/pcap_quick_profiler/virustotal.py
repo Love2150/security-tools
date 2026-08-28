@@ -2,12 +2,9 @@
 """
 VirusTotal checker for IPs produced by the PCAP Quick Profiler.
 
-Usage (PowerShell):
-  # check a specific profiler JSON
-  python .\vt_check_ips.py --json "C:\\path\\to\\reports\\pcap-profiler\\capture.json"
-
-  # or auto-pick the most recent profiler JSON (searches repo-root first)
-  python .\vt_check_ips.py --latest
+Usage:
+  pcap-profiler-vt --json reports/pcap-profiler/capture.json
+  pcap-profiler-vt --latest
 
 Requirements:
   - set your API key once (then open a NEW terminal):
@@ -228,12 +225,27 @@ def write_vt_report(json_out_path: str, txt_out_path: str, results: dict) -> Non
         f.write("\n".join(lines))
 
 
+def vt_reports_dir(outdir: str | None) -> Path:
+    """Resolve standalone VT output beneath the working directory by default."""
+    return Path(outdir).resolve() if outdir else Path.cwd() / "reports" / "vt"
+
+
+def _is_profiler_json(path: Path) -> bool:
+    """Return true only for JSON objects shaped like profiler reports."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and "src_ips" in data and "dst_ips" in data
+
+
 # ----------------------------- main ------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Check IPs from PCAP Profiler JSON against VirusTotal.")
     ap.add_argument("--json", help="Path to pcap_profiler JSON report file.")
     ap.add_argument("--latest", action="store_true", help="Automatically detect the latest profiler report.")
     ap.add_argument("--delay", type=float, default=16.0, help="Seconds between VT requests (public API ~4/min).")
+    ap.add_argument("--outdir", help="Output directory (default: ./reports/vt).")
     args = ap.parse_args()
 
     if not (args.json or args.latest):
@@ -241,16 +253,20 @@ def main():
 
     # Locate the profiler JSON
     if args.latest:
-        here = Path(__file__).resolve()
         candidates = [
+            Path.cwd() / "reports" / "pcap-profiler",
+            Path.cwd(),
+        ]
+        here = Path(__file__).resolve()
+        candidates.extend([
             here.parents[2] / "reports" / "pcap-profiler",  # repo root
             here.parents[1] / "reports" / "pcap-profiler",  # tools/
             here.parent / "reports" / "pcap-profiler",      # script folder
-        ]
+        ])
         jsons: List[Path] = []
         for d in candidates:
             if d.is_dir():
-                jsons += list(d.glob("*.json"))
+                jsons += [path for path in d.glob("*.json") if _is_profiler_json(path)]
         if not jsons:
             print("No profiler reports found.", file=sys.stderr)
             print("Looked in:", *(str(p) for p in candidates), sep="\n  - ")
@@ -281,8 +297,8 @@ def main():
     print(f"[+] Checking {len(ips)} IPs against VirusTotal...")
     results = run_vt_checks(ips, vt_key, delay=args.delay)
 
-    # Save JSON + Markdown under repo-root/reports/vt/
-    reports_dir = Path(__file__).resolve().parents[2] / "reports" / "vt"
+    # Save JSON + Markdown beneath the working directory unless overridden.
+    reports_dir = vt_reports_dir(args.outdir)
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     stem = report_path.stem  # e.g., capture_2025-11-08_1203
