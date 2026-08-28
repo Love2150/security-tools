@@ -10,6 +10,7 @@ import asyncio
 import csv
 import json
 import os
+import secrets
 import shutil
 import sys
 from collections import Counter, defaultdict
@@ -26,7 +27,7 @@ except Exception:
     sys.exit(1)
 
 try:
-    from jinja2 import Template
+    from jinja2 import Environment
 except Exception:
     print("ERROR: jinja2 not installed. Run: python -m pip install jinja2", file=sys.stderr)
     sys.exit(1)
@@ -172,10 +173,9 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
     for m in (decode_maps or []):
         custom_params += ['-d', m]
 
-    # --- Main pass (limit to useful protocols; faster JSON parser) ---
+    # --- Baseline pass: all packets for complete totals and endpoint counts ---
     cap = pyshark.FileCapture(
         path,
-        display_filter="dns || tls || http",
         keep_packets=False,
         use_json=True,
         eventloop=loop,
@@ -441,6 +441,7 @@ HTML_TEMPLATE = """
 <meta charset="utf-8">
 <title>PCAP Quick Profiler — Report</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-{{ csp_nonce }}'">
 <style>
 :root{
   --ink:#0f172a; --bg:#ffffff; --muted:#475569; --line:#e2e8f0; --accent:#2563eb;
@@ -470,7 +471,7 @@ a:hover{text-decoration:underline}
 .badge{background:#eff6ff;color:#1d4ed8;padding:2px 8px;border-radius:999px;font-size:.8rem}
 :root.dark .badge{background:#172554;color:#93c5fd}
 </style>
-<script>
+<script nonce="{{ csp_nonce }}">
 (function(){
   const saved = localStorage.getItem('pp-dark') || 'auto';
   const prefers = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -491,14 +492,18 @@ function initModeBtn(){
   const isDark = document.documentElement.classList.contains('dark');
   btn.textContent = isDark ? '☀️ Light' : '🌙 Dark';
 }
+document.addEventListener('DOMContentLoaded', function(){
+  initModeBtn();
+  document.getElementById('modeBtn').addEventListener('click', toggleMode);
+});
 </script>
-</head><body onload="initModeBtn()">
+</head><body>
 <div class="toolbar">
   <div>
     <strong>PCAP Quick Profiler — Report</strong><br>
     <small class="meta">Generated: {{ now }} UTC</small>
   </div>
-  <div><button id="modeBtn" class="btn" onclick="toggleMode()">🌙 Dark</button></div>
+  <div><button id="modeBtn" class="btn" type="button">🌙 Dark</button></div>
 </div>
 
 <div class="card">
@@ -582,9 +587,10 @@ def write_html(path: str, data: Dict[str, Any]) -> None:
         "tls_ja3": data.get("tls_ja3", []),
         "beacon_suspects": data.get("beacon_suspects", []),
     }
-    html = Template(HTML_TEMPLATE).render(
+    html = Environment(autoescape=True).from_string(HTML_TEMPLATE).render(
         s=s,
         now=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        csp_nonce=secrets.token_urlsafe(16),
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)

@@ -186,49 +186,36 @@ def render_summary_markdown(results: dict, source_report_name: str) -> str:
     return "\n".join(lines)
 
 def write_vt_report(json_out_path: str, txt_out_path: str, results: dict) -> None:
-    """
-    Save VirusTotal results to JSON (full) and a readable TXT summary.
-    Expected 'results' shape (as returned by run_vt_checks):
-      {
-        "ips_checked": [...],
-        "by_ip": {
-          "1.2.3.4": {
-             "harmless": 10, "malicious": 1, "suspicious": 0, "undetected": 60,
-             "timeout": 0, "link": "https://www.virustotal.com/gui/ip-address/1.2.3.4"
-          },
-          ...
-        }
-      }
-    """
-    import json
-    from pathlib import Path
-
-    # 1) JSON
+    """Save the mapping returned by ``run_vt_checks`` as JSON and text."""
     Path(json_out_path).parent.mkdir(parents=True, exist_ok=True)
     with open(json_out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
-    # 2) TXT
-    lines = []
-    lines.append("VirusTotal IP Reputation — Summary")
-    lines.append("=" * 60)
-    lines.append(f"IPs checked: {len(results.get('ips_checked', []))}")
-    lines.append("")
-
-    by_ip = results.get("by_ip", {})
-    if not by_ip:
+    lines = [
+        "VirusTotal IP Reputation — Summary",
+        "=" * 60,
+        f"IPs checked: {len(results)}",
+        "",
+    ]
+    if not results:
         lines.append("(No IP results)")
     else:
-        # Sort: most concerning first (malicious+suspicious)
-        def score(v):
-            return int(v.get("malicious", 0)) * 100 + int(v.get("suspicious", 0))
+        def score(item):
+            stats = item[1].get("last_analysis_stats", {}) or {}
+            return int(stats.get("malicious", 0)) * 100 + int(stats.get("suspicious", 0))
 
-        for ip, data in sorted(by_ip.items(), key=lambda kv: score(kv[1]), reverse=True):
-            m  = int(data.get("malicious", 0))
-            s  = int(data.get("suspicious", 0))
-            hu = int(data.get("harmless", 0))
-            und = int(data.get("undetected", 0))
-            to = int(data.get("timeout", 0))
+        for ip, data in sorted(results.items(), key=score, reverse=True):
+            if data.get("error"):
+                lines.append(f"{ip}")
+                lines.append(f"  error: {data['error']}")
+                lines.append("")
+                continue
+            stats = data.get("last_analysis_stats", {}) or {}
+            m = int(stats.get("malicious", 0))
+            s = int(stats.get("suspicious", 0))
+            hu = int(stats.get("harmless", 0))
+            und = int(stats.get("undetected", 0))
+            to = int(stats.get("timeout", 0))
             link = data.get("link", "")
             lines.append(f"{ip}")
             lines.append(f"  malicious: {m}, suspicious: {s}, harmless: {hu}, undetected: {und}, timeout: {to}")
