@@ -29,7 +29,7 @@ except Exception:
 
 # ---------- Required dependency for HTML ----------
 # pip install jinja2
-from jinja2 import Template
+from jinja2 import Environment
 
 
 # --------------------- IOC REGEXES ---------------------
@@ -371,6 +371,7 @@ HTML_TMPL = """<!doctype html>
 <meta charset="utf-8">
 <title>Windows Log Triage Report</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <style>
 :root{
   --bg:#0b1020; --card:#121934; --text:#e5e7eb; --muted:#9ca3af;
@@ -403,7 +404,6 @@ header{display:flex;justify-content:space-between;align-items:center;margin:8px 
 <div class="container">
   <header>
     <h1>Windows Log Triage Report</h1>
-    <a class="btn" href="#" onclick="history.back();return false;">← Back</a>
   </header>
 
   <div class="card">
@@ -543,7 +543,7 @@ header{display:flex;justify-content:space-between;align-items:center;margin:8px 
 """
 
 def render_html(summary: Dict[str, Any]) -> str:
-    t = Template(HTML_TMPL)
+    t = Environment(autoescape=True).from_string(HTML_TMPL)
     data = {
         **summary,
         "providers": summary["providers"].most_common(10),
