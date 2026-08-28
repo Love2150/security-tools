@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "winlog-triage"
+version = "0.1.0"
+description = "Defensive EVTX and Sysmon triage with portable HTML, JSON, and CSV reports."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+authors = [{ name = "Brandon Love" }]
+dependencies = [
+  "jinja2>=3.1",
+  "python-evtx>=0.7",
+  "xmltodict>=0.13",
+]
+
+[project.scripts]
+winlog-triage = "winlog_triage.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Love2150/security-tools"
+Issues = "https://github.com/Love2150/security-tools/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
