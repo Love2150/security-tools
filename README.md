@@ -118,7 +118,7 @@ security-tools/
     └── winlog-triage/
 ```
 
-Sample captures, event logs, and previously generated reports are included in the relevant tool directories for demonstration and validation.
+See [Samples, Fixtures, and Generated Reports](docs/SAMPLES_AND_FIXTURES.md) for the strict separation between deterministic test fixtures and portfolio demonstrations, the [provenance registry](docs/SAMPLE_PROVENANCE.md), and mandatory indicator-handling precautions. No binary evidence or generated report is currently retained because redistribution permission and sanitization could not be established.
 
 ## Security design
 
@@ -130,7 +130,7 @@ These utilities process attacker-controlled evidence. Current safeguards include
 - VirusTotal credentials loaded only from `VT_API_KEY`
 - Eval Unpacker reconstructing supported source text without evaluating it
 
-Generated reports can still contain sensitive evidence such as hostnames, IP addresses, command lines, URLs, and file paths. Review reports before sharing them and do not commit real credentials or private investigation data.
+Generated reports can still contain sensitive evidence such as hostnames, IP addresses, command lines, URLs, and file paths. Review reports before sharing them and do not commit real credentials or private investigation data. Do not browse, resolve, or execute extracted domains, URLs, files, payloads, or indicators.
 
 ## Development and verification
 

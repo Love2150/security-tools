@@ -1,0 +1,78 @@
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test, lint, type-check, and coverage caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+*.cover
+*.py,cover
+
+# Environments and local configuration
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+.python-version
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
+MANIFEST
+
+# Generated tool output and reports
+reports/
+out/
+*.sarif
+
+# Evidence files require explicit provenance review before force-adding
+*.pcap
+*.pcapng
+*.evtx
+*.e01
+*.raw
+*.dmp
+
+# Logs, temporary files, and editor backups
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+.tmp/
+tmp/
+
+# IDE and editor metadata
+.idea/
+.vscode/
+*.code-workspace
+
+# Operating-system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# Local Hermes agent state
+.hermes/
