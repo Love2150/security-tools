@@ -4,51 +4,55 @@ on:
   push:
     paths:
       - 'tools/eval-unpacker/**'
+      - '.github/workflows/eval-unpacker-ci.yml'
   pull_request:
     paths:
       - 'tools/eval-unpacker/**'
+      - '.github/workflows/eval-unpacker-ci.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ensure pyproject exists
-        run: test -f tools/eval-unpacker/pyproject.toml
-
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install package (editable) + pytest
+      - name: Install test and build tools
         working-directory: tools/eval-unpacker
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest
+          python -m pip install pytest coverage build
 
-      - name: Verify import and CLI
+      - name: Run tests with core coverage gate
         working-directory: tools/eval-unpacker
         run: |
-          python -c "import eval_unpacker as m; print('version:', getattr(m,'__version__','n/a'))"
-          python -c "import shutil, sys; p=shutil.which('eval-unpack'); print('eval-unpack on PATH:', p); sys.exit(0 if p else 1)"
+          coverage run -m pytest -q
+          coverage report --include='eval_unpacker/core.py' --fail-under=85
 
-      - name: CLI smoke test
+      - name: Build and install wheel
         working-directory: tools/eval-unpacker
         run: |
-          mkdir -p examples
-          echo "eval(function(p,a,c,k,e,d){return p}('abc',10,2,'a|b'))" > examples/sample.js
-          eval-unpack examples/sample.js
-          python -m eval_unpacker.cli examples/sample.js
+          python -m build --outdir dist
+          python -m pip install --force-reinstall dist/*.whl
 
-      - name: Run pytest if present
+      - name: Verify installed CLI outside the source tree
         working-directory: tools/eval-unpacker
         run: |
-          if [ -d tests ]; then
-            pytest -q
-          else
-            echo "No tests/; skipping."
-          fi
+          python -c "import shutil, sys; sys.exit(0 if shutil.which('eval-unpack') else 1)"
+          tmpdir="$(mktemp -d)"
+          cd "$tmpdir"
+          printf "%s\n" "eval(function(p,a,c,k,e,d){return p}('abc',10,0,''.split('|')))" > sample.js
+          test "$(eval-unpack sample.js)" = "abc"
+          test "$(python -m eval_unpacker.cli sample.js)" = "abc"
