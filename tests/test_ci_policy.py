@@ -138,8 +138,17 @@ def test_integration_and_security_gates_are_present_and_deterministic(tmp_path):
     assert "text2pcap -q -t ISO" in workflow
     assert "mktemp -d" in workflow
     assert 'python scripts/verify_synthetic_pcap.py "$workdir/reports"' in workflow
-    assert "python -m pip_audit --strict --local" in workflow
-    assert "'./tools/eval-unpacker[beautify]'" in workflow
+    assert "python -m pip_audit --strict --requirement .github/requirements-audit.txt" in workflow
+    audit_requirements = (ROOT / ".github" / "requirements-audit.txt").read_text(encoding="utf-8")
+    for dependency in (
+        "jsbeautifier>=1.15.1",
+        "jinja2>=3.1",
+        "pyshark>=0.6",
+        "requests>=2.31",
+        "python-evtx>=0.7",
+        "xmltodict>=0.13",
+    ):
+        assert dependency in audit_requirements
     assert "gitleaks/gitleaks-action" in workflow
     assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
     assert "GITLEAKS_ENABLE_COMMENTS: false" in workflow

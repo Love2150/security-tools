@@ -148,8 +148,8 @@ jobs:
       - name: Audit installed runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pip-audit './tools/eval-unpacker[beautify]' ./tools/pcap-profiler ./tools/winlog-triage
-          python -m pip_audit --strict --local
+          python -m pip install pip-audit
+          python -m pip_audit --strict --requirement .github/requirements-audit.txt
       - name: Scan pull request and push changes for secrets
         uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
         env:
