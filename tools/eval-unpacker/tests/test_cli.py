@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from eval_unpacker.cli import _encode_output
 from eval_unpacker.core import LimitExceeded
 

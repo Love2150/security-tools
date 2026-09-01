@@ -1,7 +1,6 @@
 import tracemalloc
 
 import pytest
-
 from eval_unpacker.core import (
     DEFAULT_LIMITS,
     LimitExceeded,

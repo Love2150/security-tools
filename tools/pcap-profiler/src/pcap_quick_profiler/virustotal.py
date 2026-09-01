@@ -13,9 +13,14 @@ Requirements:
 """
 
 from __future__ import annotations
-import os, sys, json, time, argparse
+
+import argparse
+import json
+import os
+import sys
+import time
 from pathlib import Path
-from typing import Dict, Iterable, Set, Tuple, Any, List
+from typing import Any, Dict, Iterable, List, Set
 
 try:
     import requests
@@ -312,7 +317,7 @@ def main():
     with open(md_out, "w", encoding="utf-8") as f:
         f.write(md)
 
-    print(f"\n✅ Results saved:")
+    print("\n✅ Results saved:")
     print(f"  • JSON: {json_out}")
     print(f"  • Markdown: {md_out}")
 

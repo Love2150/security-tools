@@ -1,0 +1,171 @@
+name: Repository CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: tools/eval-unpacker:tools/pcap-profiler/src:tools/winlog-triage/src
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install repository and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest coverage ruff jinja2 pyshark requests python-evtx xmltodict
+      - name: Test the complete repository
+        run: |
+          python -m pytest -q tests tools/eval-unpacker/tests
+          PYTHONPATH=tools/eval-unpacker coverage run --source=eval_unpacker -m pytest -q tools/eval-unpacker/tests
+          coverage report --include='tools/eval-unpacker/eval_unpacker/core.py' --fail-under=85
+      - name: Lint the complete maintained repository
+        run: ruff check .
+
+  eval_compatibility:
+    name: Eval Unpacker compatibility (Python 3.9)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.9'
+      - name: Test the supported Python 3.9 boundary
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          PYTHONPATH=tools/eval-unpacker python -m pytest -q tools/eval-unpacker/tests
+
+  package:
+    name: Build and isolated wheel smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Build wheel and source distributions
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build "tools/eval-unpacker"
+          python -m build "tools/pcap-profiler"
+          python -m build "tools/winlog-triage"
+      - name: Smoke-test eval-unpacker wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-eval-unpacker"
+          source "$RUNNER_TEMP/venv-eval-unpacker/bin/activate"
+          python -m pip install tools/eval-unpacker/dist/*.whl
+          eval-unpack --help
+          python -m eval_unpacker.cli --help
+          deactivate
+      - name: Smoke-test pcap-profiler wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-pcap-profiler"
+          source "$RUNNER_TEMP/venv-pcap-profiler/bin/activate"
+          python -m pip install tools/pcap-profiler/dist/*.whl
+          pcap-profiler --help
+          pcap-profiler-vt --help
+          python -m pcap_quick_profiler --help
+          deactivate
+      - name: Smoke-test winlog-triage wheel in a clean environment
+        run: |
+          python -m venv "$RUNNER_TEMP/venv-winlog-triage"
+          source "$RUNNER_TEMP/venv-winlog-triage/bin/activate"
+          python -m pip install tools/winlog-triage/dist/*.whl
+          winlog-triage --help
+          python -m winlog_triage --help
+          deactivate
+      - name: Upload all distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-distributions
+          path: |
+            tools/*/dist/*.whl
+            tools/*/dist/*.tar.gz
+          if-no-files-found: error
+
+  integration:
+    name: Synthetic TShark PCAP integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install TShark and profiler wheel
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tshark
+          python -m pip install --upgrade pip build
+          python -m build --wheel "tools/pcap-profiler"
+          python -m pip install tools/pcap-profiler/dist/*.whl
+      - name: Generate and inspect a deterministic synthetic capture
+        run: |
+          workdir="$(mktemp -d)"
+          printf '2024-01-01T00:00:00Z\n0000  48 65 6c 6c 6f 0a\n' > "$workdir/payload.hex"
+          text2pcap -q -t ISO -u 12345,53 "$workdir/payload.hex" "$workdir/synthetic.pcap"
+          test "$(tshark -r "$workdir/synthetic.pcap" -T fields -e frame.number 2>/dev/null)" = "1"
+          pcap-profiler "$workdir/synthetic.pcap" --outdir "$workdir/reports"
+          python scripts/verify_synthetic_pcap.py "$workdir/reports"
+
+  security:
+    name: Dependency and secret scanning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Audit installed runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pip-audit
+          python -m pip_audit --strict --requirement .github/requirements-audit.txt
+      - name: Scan pull request and push changes for secrets
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: false
+
+  required:
+    name: Required repository checks
+    if: ${{ always() }}
+    needs: [quality, eval_compatibility, package, integration, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce every repository gate
+        run: |
+          test "${{ needs.quality.result }}" = "success"
+          test "${{ needs.eval_compatibility.result }}" = "success"
+          test "${{ needs.package.result }}" = "success"
+          test "${{ needs.integration.result }}" = "success"
+          test "${{ needs.security.result }}" = "success"

@@ -1,0 +1,8 @@
+# Runtime dependencies for repository-wide vulnerability auditing.
+# Keep this list aligned with every package's required and supported optional dependencies.
+jsbeautifier>=1.15.1
+jinja2>=3.1
+pyshark>=0.6
+requests>=2.31
+python-evtx>=0.7
+xmltodict>=0.13
