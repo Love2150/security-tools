@@ -45,6 +45,61 @@ def test_virustotal_and_allowlist_are_packaged():
     assert sorted(data) == ["ja3", "sni"]
 
 
+def test_virustotal_accepts_only_globally_routable_addresses(tmp_path, monkeypatch):
+    module = load_virustotal_module()
+    report = tmp_path / "capture.json"
+    report.write_text(
+        json.dumps(
+            {
+                "src_ips": [
+                    ["1.1.1.1", 1],
+                    ["10.0.0.8", 2],
+                    ["224.0.0.251", 3],
+                    ["239.255.255.250", 4],
+                    ["240.0.0.1", 5],
+                    ["not:an:ip", 6],
+                ],
+                "dst_ips": [
+                    ["2606:4700:4700::1111", 1],
+                    ["fc00::1", 2],
+                    ["ff02::fb", 3],
+                    ["ff05::c", 4],
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert module.ip_set_from_profiler_json(str(report)) == {
+        "1.1.1.1",
+        "2606:4700:4700::1111",
+    }
+
+    queried = []
+
+    def fake_report(ip, api_key, session):
+        queried.append(ip)
+        return {"ip": ip, "positives": 0}
+
+    monkeypatch.setattr(module, "vt_ip_report", fake_report)
+    results = module.run_vt_checks(
+        [
+            "1.1.1.1",
+            "10.0.0.8",
+            "224.0.0.251",
+            "239.255.255.250",
+            "240.0.0.1",
+            "not:an:ip",
+            "fc00::1",
+            "ff02::fb",
+            "ff05::c",
+        ],
+        "test-key",
+        delay=0,
+    )
+    assert queried == ["1.1.1.1"]
+    assert list(results) == ["1.1.1.1"]
+
+
 def test_source_distribution_excludes_capture_samples_and_generated_outputs():
     manifest = (TOOL / "MANIFEST.in").read_text(encoding="utf-8")
     for directory in ("samples", "out", "reports", "dist"):

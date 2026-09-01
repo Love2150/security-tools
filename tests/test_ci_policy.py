@@ -111,7 +111,9 @@ def test_integration_and_security_gates_are_present_and_deterministic(tmp_path):
     reports = tmp_path / "reports"
     reports.mkdir()
     (reports / "synthetic.json").write_text(
-        '{"packets": 1, "dst_ports": [["53", 1]]}', encoding="utf-8"
+        '{"packets": 1, "bytes": 60, "src_ips": [["10.1.1.1", 1]], '
+        '"dst_ips": [["10.2.2.2", 1]], "dst_ports": [["53", 1]]}',
+        encoding="utf-8",
     )
     result = subprocess.run(
         [sys.executable, str(verifier), str(reports)],

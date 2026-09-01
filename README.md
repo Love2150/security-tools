@@ -4,6 +4,27 @@ Defensive security utilities for packet-capture profiling, Windows event-log tri
 
 [![Repository CI](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml/badge.svg)](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml)
 
+## Portfolio overview
+
+This repository is an engineering portfolio built around realistic defensive-security trust boundaries. It demonstrates secure evidence handling, analytical validation, Python packaging, regression testing, CI/CD hardening, supply-chain controls, and release governance—not just standalone scripts.
+
+For a focused employer or interview review:
+
+- [Portfolio guide and security engineering case studies](docs/PORTFOLIO.md)
+- [Architecture, data flows, and trust boundaries](docs/ARCHITECTURE.md)
+- [Repository-wide CI](.github/workflows/repository-ci.yml)
+- [Security policy](SECURITY.md)
+- [Fail-closed release procedure](docs/RELEASING.md)
+
+### Engineering highlights
+
+- Treats PCAP, EVTX, XML, filenames, command lines, and reconstructed source as attacker-controlled data.
+- Prevents stored report injection with contextual escaping and restrictive Content Security Policy protection.
+- Validates analytical claims against independent tooling and records parsing completeness.
+- Exercises built wheels in clean environments so installed behavior—not only checkout behavior—is tested.
+- Produces a pinned, least-privilege aggregate CI gate spanning tests, coverage, builds, TShark integration, dependency auditing, and secret scanning; repository administrators can require that stable result in branch protection.
+- Removes evidence without established redistribution permission and enforces provenance for anything retained.
+
 ## Tools
 
 | Tool | Purpose | Python | Primary command | Documentation |
@@ -120,7 +141,7 @@ Audit all required and supported optional dependencies:
 uvx --from pip-audit pip-audit --strict --requirement .github/requirements-audit.txt
 ```
 
-The aggregate [repository CI workflow](.github/workflows/repository-ci.yml) tests Python 3.10–3.13, preserves Eval Unpacker Python 3.9 compatibility, enforces Eval Unpacker core coverage, builds every wheel and source distribution, smoke-tests installed entry points, generates a deterministic TShark fixture, audits dependencies, and scans for secrets. The stable `Required repository checks` result protects `main`.
+The aggregate [repository CI workflow](.github/workflows/repository-ci.yml) tests Python 3.10–3.13, preserves Eval Unpacker Python 3.9 compatibility, enforces Eval Unpacker core coverage, builds every wheel and source distribution, smoke-tests installed entry points, generates a deterministic TShark fixture, audits dependencies, and scans for secrets. It produces the stable `Required repository checks` result for branch-protection use.
 
 ## Project governance
 
