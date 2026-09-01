@@ -1,20 +1,20 @@
 # Security Tools
 
-A collection of defensive security utilities for packet-capture triage, Windows event-log analysis, and safe inspection of packed JavaScript. The tools are organized as independent projects so each can be installed or run with only the dependencies it needs.
+Defensive security utilities for packet-capture profiling, Windows event-log triage, and safe reconstruction of classic packed JavaScript. Each tool is an independently installable Python package with an explicit trust boundary and machine-readable output.
 
-[![Eval-Unpacker CI](https://github.com/Love2150/security-tools/actions/workflows/eval-unpacker-ci.yml/badge.svg)](https://github.com/Love2150/security-tools/actions/workflows/eval-unpacker-ci.yml)
+[![Repository CI](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml/badge.svg)](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml)
 
 ## Tools
 
-| Tool | Purpose | Status | Documentation |
-| --- | --- | --- | --- |
-| PCAP Quick Profiler | Summarizes PCAP/PCAPNG traffic and produces JSON, text, CSV, and protected HTML reports; optional VirusTotal IP enrichment | Installable Python package | [README](tools/pcap-profiler/README.md) |
-| Windows Log Triage | Parses EVTX and Sysmon data, applies lightweight ATT&CK-oriented triage rules, and creates HTML, JSON, and CSV reports | Standalone Python tool | [Source](tools/winlog-triage/wintriage.py) |
-| Eval Unpacker | Unpacks JavaScript using the `eval(function(p,a,c,k,e,d){...})` pattern without executing the recovered payload | Installable Python package | [README](tools/eval-unpacker/ReadME.md) |
+| Tool | Purpose | Python | Primary command | Documentation |
+| --- | --- | --- | --- | --- |
+| PCAP Quick Profiler | Full-capture statistics plus focused HTTP/TLS triage and optional VirusTotal IP enrichment | 3.10+ | `pcap-profiler` | [README](tools/pcap-profiler/README.md) |
+| Windows Log Triage | EVTX/Sysmon normalization, IOC extraction, lightweight rules, and parsing-completeness reporting | 3.10+ | `winlog-triage` | [README](tools/winlog-triage/README.md) |
+| Eval Unpacker | Reconstructs the first supported classic packer occurrence without executing JavaScript | 3.9+ | `eval-unpack` | [README](tools/eval-unpacker/README.md) |
+
+These are triage tools. Findings require analyst validation and are not verdicts.
 
 ## Quick start
-
-Clone the repository:
 
 ```bash
 git clone https://github.com/Love2150/security-tools.git
@@ -23,27 +23,20 @@ cd security-tools
 
 ### PCAP Quick Profiler
 
-Requirements:
-
-- Python 3.10 or newer
-- Wireshark/TShark available on `PATH`
-
-Install and run:
+Install TShark first, then:
 
 ```bash
 python -m pip install ./tools/pcap-profiler
-pcap-profiler capture.pcap
+pcap-profiler capture.pcap --outdir reports/pcap-profiler
 ```
 
-The equivalent module command is:
+Equivalent module command:
 
 ```bash
 python -m pcap_quick_profiler capture.pcap
 ```
 
-Reports are written beneath `reports/pcap-profiler/` by default. Use `--outdir` to select another location.
-
-Optional VirusTotal enrichment reads the API key from the environment:
+Optional VirusTotal enrichment uses only `VT_API_KEY`:
 
 ```bash
 export VT_API_KEY="<YOUR_API_KEY>"
@@ -51,123 +44,97 @@ pcap-profiler capture.pcap --vt
 pcap-profiler-vt --latest
 ```
 
-The API key is not written to generated reports. See the [PCAP Quick Profiler documentation](tools/pcap-profiler/README.md) and [cheat sheet](docs/CHEATSHEET.md) for additional options.
-
 ### Windows Log Triage
 
-Requirements:
-
-- Python 3
-- Dependencies listed in `tools/winlog-triage/requirements.txt`
-
-Create an isolated environment, install dependencies, and analyze one or more EVTX files or a directory:
-
 ```bash
-python -m venv .venv
-# Linux/macOS
-. .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-
-python -m pip install -r tools/winlog-triage/requirements.txt
-python tools/winlog-triage/wintriage.py path/to/logs --outdir reports/winlog-triage
+python -m pip install ./tools/winlog-triage
+winlog-triage path/to/logs --outdir reports/winlog-triage
 ```
 
-The tool generates timestamped HTML, JSON, and CSV output. Use `--max-per-file` for a bounded demonstration run, or `--html`, `--json`, and `--csv` to choose exact output paths.
+Equivalent module command:
+
+```bash
+python -m winlog_triage path/to/file.evtx
+```
 
 ### Eval Unpacker
-
-Requirements:
-
-- Python 3.9 or newer
-
-Install and run:
-
-```bash
-python -m pip install ./tools/eval-unpacker
-
-eval-unpack packed.js --recursive
-```
-
-Install the optional beautifier when formatted output is needed:
 
 ```bash
 python -m pip install "./tools/eval-unpacker[beautify]"
 eval-unpack packed.js --recursive --beautify
-```
-
-Standard input is supported:
-
-```bash
 cat packed.js | eval-unpack -
 ```
 
-Eval Unpacker reconstructs supported packed JavaScript; it does not execute the unpacked payload.
+Eval Unpacker reconstructs supported source text; it does not execute recovered JavaScript.
 
-## Repository layout
+## Outputs and interfaces
 
-```text
-security-tools/
-├── docs/
-│   └── CHEATSHEET.md
-├── tests/
-│   ├── test_phase_one_security.py
-│   └── test_phase_two_packaging.py
-└── tools/
-    ├── eval-unpacker/
-    ├── pcap-profiler/
-    └── winlog-triage/
-```
+- PCAP Quick Profiler writes timestamped JSON, text, CSV, and CSP-protected HTML beneath `reports/pcap-profiler/` by default.
+- Windows Log Triage writes timestamped JSON, CSV, and CSP-protected HTML beneath its selected output directory.
+- Eval Unpacker writes reconstructed UTF-8 text to standard output and diagnostics to standard error.
 
-See [Samples, Fixtures, and Generated Reports](docs/SAMPLES_AND_FIXTURES.md) for the strict separation between deterministic test fixtures and portfolio demonstrations, the [provenance registry](docs/SAMPLE_PROVENANCE.md), and mandatory indicator-handling precautions. No binary evidence or generated report is currently retained because redistribution permission and sanitization could not be established.
+Each tool README documents prerequisites, exact options, output schema, exit codes, and limitations. The PCAP [cheat sheet](docs/CHEATSHEET.md) provides common commands.
 
-## Security design
+## Security model
 
-These utilities process attacker-controlled evidence. Current safeguards include:
+The tools process attacker-controlled evidence. Safeguards include:
 
-- HTML autoescaping for PCAP and EVTX evidence fields
-- Restrictive Content Security Policy headers in generated HTML reports
-- Nonce-protected scripting in PCAP HTML reports
-- VirusTotal credentials loaded only from `VT_API_KEY`
-- Eval Unpacker reconstructing supported source text without evaluating it
+- automatic HTML escaping and restrictive Content Security Policy protection;
+- no JavaScript execution by Eval Unpacker;
+- bounded unpacking resources and explicit malformed-input rejection;
+- full-capture PCAP totals independently checked with TShark;
+- parser-completeness metadata for Windows event logs;
+- environment-only VirusTotal credentials;
+- strict sample provenance and generated-artifact controls;
+- repository-wide lint, tests, builds, installed-wheel smoke tests, dependency auditing, and secret scanning.
 
-Generated reports can still contain sensitive evidence such as hostnames, IP addresses, command lines, URLs, and file paths. Review reports before sharing them and do not commit real credentials or private investigation data. Do not browse, resolve, or execute extracted domains, URLs, files, payloads, or indicators.
+Generated reports may still contain sensitive hostnames, addresses, usernames, command lines, URLs, and paths. Review reports before sharing. Do not browse, resolve, execute, or submit recovered indicators or payloads to third parties without authorization.
 
-## Development and verification
+Report vulnerabilities privately through the [Security Policy](SECURITY.md).
 
-Run the security and packaging regression suites from the repository root:
+## Samples and evidence
 
-```bash
-uv run --isolated \
-  --with pytest \
-  --with jinja2 \
-  --with pyshark \
-  --with requests \
-  --with python-evtx \
-  --with xmltodict \
-  pytest -q tests/test_phase_one_security.py tests/test_phase_two_packaging.py
-```
+No binary evidence is currently retained because redistribution permission and sanitization could not be established. Tests generate deterministic fixtures where possible. See:
 
-Run the Eval Unpacker tests from its package directory:
+- [Samples and Fixtures](docs/SAMPLES_AND_FIXTURES.md)
+- [Sample Provenance](docs/SAMPLE_PROVENANCE.md)
+- [Provenance Registry](docs/sample-provenance.json)
+
+A retained sample requires documented source, creator, redistribution permission, SHA-256, expected indicators, and sanitization status.
+
+## Development
+
+Run the complete source suite and Ruff gate:
 
 ```bash
-cd tools/eval-unpacker
-uv run --isolated --with pytest pytest -q
+uv run --python 3.13 --isolated \
+  --with pytest --with coverage --with ruff \
+  --with jinja2 --with pyshark --with requests \
+  --with python-evtx --with xmltodict --with pyyaml --with tomli \
+  sh -c 'PYTHONPATH=tools/eval-unpacker:tools/pcap-profiler/src:tools/winlog-triage/src python -m pytest -q tests tools/eval-unpacker/tests && ruff check .'
 ```
 
-The Eval Unpacker GitHub Actions workflow also verifies installation, imports, CLI availability, and a smoke-test unpacking operation.
+Audit all required and supported optional dependencies:
+
+```bash
+uvx --from pip-audit pip-audit --strict --requirement .github/requirements-audit.txt
+```
+
+The aggregate [repository CI workflow](.github/workflows/repository-ci.yml) tests Python 3.10–3.13, preserves Eval Unpacker Python 3.9 compatibility, enforces Eval Unpacker core coverage, builds every wheel and source distribution, smoke-tests installed entry points, generates a deterministic TShark fixture, audits dependencies, and scans for secrets. The stable `Required repository checks` result protects `main`.
+
+## Project governance
+
+- [MIT License](LICENSE)
+- [Security Policy](SECURITY.md)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Release Procedure](docs/RELEASING.md)
+
+GitHub Releases are the current release channel. PyPI publication is not configured. Packages use independent semantic versions and package-prefixed tags.
 
 ## Responsible use
 
-Use these tools only with captures, logs, systems, and code you are authorized to analyze. They are intended for defensive investigation, education, laboratory work, and incident-response support. Validate findings with additional evidence before making containment or attribution decisions.
-
-## Contributing
-
-1. Create a focused branch.
-2. Add or update tests for behavior changes.
-3. Run the relevant verification commands.
-4. Open a pull request describing the change and how it was tested.
-
-Bug reports and focused improvements are welcome through [GitHub Issues](https://github.com/Love2150/security-tools/issues).
+Use these tools only with captures, logs, systems, and code you are authorized to analyze. Preserve original evidence, use isolated analysis systems, and corroborate automated findings before containment, escalation, or attribution decisions.
 
 ## Author
 

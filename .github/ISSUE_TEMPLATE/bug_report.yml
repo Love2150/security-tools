@@ -1,0 +1,78 @@
+name: Bug report
+description: Report a reproducible defect in a security tool
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not submit vulnerabilities, credentials, private evidence, malware, or personal data here. Use the private process in SECURITY.md.
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Affected tool
+      options:
+        - Eval Unpacker
+        - PCAP Quick Profiler
+        - Windows Log Triage
+        - Repository CI or documentation
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04, Windows 11, macOS 15
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: 3.13.2
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tool version or commit
+      placeholder: pcap-quick-profiler 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and sanitized input details
+      description: Include the exact command and only sanitized, non-sensitive input characteristics. Do not attach real evidence.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include complete error text with credentials, paths, and investigation data removed.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Prefer deterministic synthetic data and list every step.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I removed credentials, personal data, malware, and proprietary evidence.
+          required: true
+        - label: Any attached or linked fixture is sanitized and has documented redistribution permission.
+          required: true

@@ -28,7 +28,7 @@ jobs:
       - name: Install repository and quality tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest coverage ruff jinja2 pyshark requests python-evtx xmltodict
+          python -m pip install pytest coverage ruff jinja2 pyshark requests python-evtx xmltodict pyyaml tomli
       - name: Test the complete repository
         run: |
           python -m pytest -q tests tools/eval-unpacker/tests
