@@ -15,6 +15,7 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import sys
@@ -44,22 +45,19 @@ def ip_set_from_profiler_json(path: str) -> Set[str]:
         for entry in items:
             if isinstance(entry, (list, tuple)) and entry:
                 ip = str(entry[0]).strip()
-                if ip and _looks_like_ip(ip):
+                if ip and _is_public_ip(ip):
                     ips.add(ip)
 
     return ips
 
 
-def _looks_like_ip(s: str) -> bool:
-    """Very small IPv4/IPv6 check."""
-    if s.count(".") == 3:
-        parts = s.split(".")
-        try:
-            return len(parts) == 4 and all(0 <= int(p) <= 255 for p in parts)
-        except Exception:
-            return False
-    # allow simple IPv6 presence
-    return ":" in s
+def _is_public_ip(value: str) -> bool:
+    """Return True only for globally routable unicast IPv4 or IPv6 addresses."""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return address.is_global and not address.is_multicast and not address.is_reserved
 
 
 def vt_ip_report(ip: str, api_key: str, session: requests.Session) -> Dict[str, Any]:
@@ -105,8 +103,9 @@ def run_vt_checks(ips: Iterable[str], api_key: str, delay: float = 16.0) -> Dict
     """
     out: Dict[str, Any] = {}
     sess = requests.Session()
+    public_ips = sorted({str(ip).strip() for ip in ips if _is_public_ip(str(ip).strip())})
 
-    for i, ip in enumerate(sorted(set(ips))):
+    for i, ip in enumerate(public_ips):
         res = vt_ip_report(ip, api_key, sess)
 
         # If rate-limited, backoff once and retry
@@ -117,7 +116,7 @@ def run_vt_checks(ips: Iterable[str], api_key: str, delay: float = 16.0) -> Dict
         out[ip] = res
 
         # sleep between calls unless it's the last one
-        if i < len(set(ips)) - 1:
+        if i < len(public_ips) - 1:
             time.sleep(delay)
 
     return out

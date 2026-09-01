@@ -12,6 +12,7 @@ All notable changes to this repository are documented here. The format follows [
 ### Changed
 
 - Repository and tool documentation now reference the aggregate repository CI workflow.
+- VirusTotal enrichment now rejects private, reserved, multicast, and malformed IP candidates before any third-party request.
 
 ## [2026-09-01]
 
@@ -40,7 +41,7 @@ All notable changes to this repository are documented here. The format follows [
 
 - Added repository-wide tests, Ruff enforcement, package builds, clean-wheel smoke tests, deterministic TShark integration, dependency auditing, and secret scanning.
 - Added sample-provenance and repository-hygiene policy with automated enforcement.
-- Protected `main` with the aggregate `Required repository checks` status.
+- Added the stable aggregate `Required repository checks` status for branch-protection use.
 
 [Unreleased]: https://github.com/Love2150/security-tools/compare/main...HEAD
 [2026-09-01]: https://github.com/Love2150/security-tools/commits/main
