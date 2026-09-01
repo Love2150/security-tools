@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,7 @@ description = "Fast PCAP triage with complete baseline statistics and focused HT
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10"
 authors = [{ name = "Brandon Love" }]
+license = "MIT"
 dependencies = [
   "jinja2>=3.1",
   "pyshark>=0.6",

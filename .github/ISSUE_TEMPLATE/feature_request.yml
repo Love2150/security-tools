@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a focused defensive-analysis improvement
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Target area
+      options:
+        - Eval Unpacker
+        - PCAP Quick Profiler
+        - Windows Log Triage
+        - Repository CI
+        - Documentation or governance
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Analyst problem
+      description: Describe the defensive workflow problem, not only the desired implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include expected inputs, outputs, failure behavior, and compatibility impact.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and privacy impact
+      description: Explain trust boundaries, attacker-controlled data, resource use, external services, credentials, and evidence handling.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request is for authorized defensive, educational, or incident-response use.
+          required: true
+        - label: I will not submit private evidence or redistribute samples without permission.
+          required: true

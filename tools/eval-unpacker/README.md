@@ -1,24 +1,19 @@
-# eval-unpacker
+# Eval Unpacker
 
-[![Eval-Unpacker CI](https://github.com/Love2150/security-tools/actions/workflows/eval-unpacker-ci.yml/badge.svg)](https://github.com/Love2150/security-tools/actions/workflows/eval-unpacker-ci.yml)
+A defensive command-line tool that reconstructs the first classic `eval(function(p,a,c,k,e,d){...})(...)` JavaScript packer payload without executing JavaScript.
 
-A defensive command-line tool that reconstructs classic
-`eval(function(p,a,c,k,e,d){...})(...)` JavaScript packer payloads **without
-executing JavaScript**.
+[![Repository CI](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml/badge.svg)](https://github.com/Love2150/security-tools/actions/workflows/repository-ci.yml)
 
-## Installation
+## Prerequisites
 
-From the repository:
+- Python 3.9 or newer
+- Optional `jsbeautifier` support through the `beautify` extra
 
-```bash
-cd tools/eval-unpacker
-python -m pip install .
-```
-
-Optional formatting support:
+Install from the repository root:
 
 ```bash
-python -m pip install '.[beautify]'
+python -m pip install ./tools/eval-unpacker
+python -m pip install "./tools/eval-unpacker[beautify]"
 ```
 
 ## Usage
@@ -30,81 +25,73 @@ eval-unpack - < packed.js
 python -m eval_unpacker.cli packed.js
 ```
 
-The tool intentionally processes the **first supported packer occurrence** in
-the input. With `--recursive`, it follows the first nested occurrence at each
-layer. It does not evaluate unsupported JavaScript expressions.
+The tool processes the first supported packer occurrence. With `--recursive`, it follows the first nested supported occurrence at each layer.
 
-### Safety limits
+Options:
 
-Hostile input is bounded by conservative defaults:
+| Option | Default | Meaning |
+| --- | ---: | --- |
+| `--beautify` | off | Format with the optional `jsbeautifier` dependency |
+| `--indent N` | 2 | Beautifier indentation from 1 through 16 |
+| `--wrap N` | 0 | Wrap length from 0 through 10,000; 0 disables wrapping |
+| `--recursive` | off | Unpack nested supported layers |
+| `--debug` | off | Write parser diagnostics to standard error |
+| `--max-input-bytes N` | 5,000,000 | Input, intermediate, and output byte ceiling |
+| `--max-tokens N` | 10,000 | Declared dictionary entries per layer |
+| `--max-replacements N` | 100,000 | Token substitutions per layer |
+| `--max-recursion-depth N` | 10 | Unpacked layers |
 
-| Option | Default | Purpose |
-|---|---:|---|
-| `--max-input-bytes` | 5,000,000 | Input, output, and intermediate payload bytes |
-| `--max-tokens` | 10,000 | Declared dictionary entries per layer |
-| `--max-replacements` | 100,000 | Token substitutions per layer |
-| `--max-recursion-depth` | 10 | Unpacked layers |
+CLI overrides are themselves bounded: 50,000,000 input bytes, 100,000 tokens, 1,000,000 replacements, and 100 layers. Beautification accepts no more than 1,000,000 input bytes.
 
-CLI overrides are bounded to prevent accidental or hostile extreme allocations: input
-bytes up to 50,000,000, tokens up to 100,000, replacements up to 1,000,000,
-and recursion depth up to 100. Raising defaults can increase CPU and memory use,
-so only do so for trusted samples. Beautification accepts inputs up to 1,000,000
-bytes and the final UTF-8 output is checked again after all post-processing.
+## Output schema
 
-Input is decoded as UTF-8. Invalid byte sequences are replaced with the Unicode
-replacement character and a warning identifying the first invalid byte is
-written to stderr; bytes are never silently discarded.
+Successful output is reconstructed JavaScript text written as UTF-8 to standard output with one trailing newline. The command does not create report files and does not wrap output in JSON.
 
-### Other options
+Diagnostics, debug details, decoding warnings, and errors are written to standard error. Invalid UTF-8 bytes are replaced with the Unicode replacement character and the first invalid byte offset is reported; bytes are never silently discarded.
 
-- `--beautify`: format output with the optional `jsbeautifier` dependency
-- `--indent N`: beautifier indentation, 1–16 (default: 2)
-- `--wrap N`: beautifier line length, 0–10,000; 0 disables wrapping
-- `--recursive`: unpack nested supported packers within the configured limit
-- `--debug`: write parser details to stderr
+## Exit codes
 
-## Supported syntax and limitations
+| Code | Meaning |
+| ---: | --- |
+| `0` | A supported payload was reconstructed and written successfully |
+| `1` | No supported packer occurrence was found |
+| `2` | Invalid arguments, unreadable input, exceeded resource limit, or invalid option range |
 
-The parser supports classic packer calls with:
+Unexpected interpreter or operating-system failures can also produce a non-zero status.
+
+## Supported syntax
+
+The parser accepts classic packer calls with:
 
 - a quoted payload string;
-- integer base values from 2 through 36;
+- an integer base from 2 through 36;
 - a non-negative token count;
 - a quoted token dictionary followed by `.split(...)`, or a literal string array.
 
-Malformed calls, dynamic token expressions such as function calls, and other
-JavaScript packer families are rejected. For `.split('')`, dictionaries are
-split using JavaScript UTF-16 code units; non-BMP surrogate units are emitted as
-visible `\\uXXXX` escapes so output remains valid UTF-8. Treat unpacked output as
-potentially malicious evidence: do not execute it on a production system.
+For `.split('')`, dictionary strings use JavaScript UTF-16 code units. Non-BMP surrogate units are emitted as visible `\\uXXXX` escapes so output remains valid UTF-8.
+
+## Limitations
+
+- Only the first supported packer occurrence is processed at each layer.
+- Other JavaScript packer families and dynamic token expressions are rejected.
+- Reconstruction is not proof that the recovered program is safe or complete.
+- Beautification is formatting only and can change presentation.
+- Recovered source may be malicious. Do not execute it on a production or trusted system.
+
+This tool is for triage and analyst inspection, not sandboxing or malware classification.
 
 ## Development
 
 ```bash
+cd tools/eval-unpacker
 python -m pip install -e . pytest coverage
 pytest -q
 coverage run -m pytest -q
 coverage report --include='eval_unpacker/core.py' --fail-under=85
 ```
 
-CI tests every Python version declared by the package (3.9 through 3.13), runs
-the suite, enforces at least 85% core coverage, and smoke-tests the installed
-CLI.
-
-## Project layout
-
-```text
-tools/eval-unpacker/
-├── eval_unpacker/
-│   ├── __init__.py
-│   ├── cli.py
-│   └── core.py
-├── tests/
-├── LICENSE
-├── pyproject.toml
-└── README.md
-```
+Repository CI tests Python 3.9–3.13, enforces at least 85% core coverage, and smoke-tests the installed CLI.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE).
+MIT. See the package [LICENSE](LICENSE) and repository [license](../../LICENSE).
