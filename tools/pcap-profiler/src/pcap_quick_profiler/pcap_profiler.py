@@ -15,7 +15,6 @@ import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
 from typing import Any, Dict, List, Optional
 
 # ---- Dependencies ----
@@ -242,7 +241,10 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         eventloop=loop,
         custom_parameters=custom_params,
     )
-    http_hosts = Counter(); http_uas = Counter(); http_urls = Counter(); http_ctypes = Counter()
+    http_hosts = Counter()
+    http_uas = Counter()
+    http_urls = Counter()
+    http_ctypes = Counter()
     try:
         for pkt in http_cap:
             http = getattr(pkt, "http", None)
@@ -276,20 +278,27 @@ def profile_pcap(path: str, top_n: int = 10, decode_maps: Optional[List[str]] = 
         eventloop=loop,
         custom_parameters=custom_params,
     )
-    tls_versions = Counter(); tls_ciphers = Counter(); tls_sni = Counter(); tls_ja3 = Counter()
+    tls_versions = Counter()
+    tls_ciphers = Counter()
+    tls_sni = Counter()
+    tls_ja3 = Counter()
     try:
         for pkt in tls_cap:
             tls = getattr(pkt, "tls", None)
             if not tls:
                 continue
             v = getattr(tls, "handshake_version", None)
-            if v: tls_versions[v] += 1
+            if v:
+                tls_versions[v] += 1
             cs = getattr(tls, "handshake_ciphersuite", None)
-            if cs: tls_ciphers[cs] += 1
+            if cs:
+                tls_ciphers[cs] += 1
             sni = getattr(tls, "handshake_extensions_server_name", None)
-            if sni: tls_sni[sni] += 1
+            if sni:
+                tls_sni[sni] += 1
             ja3 = getattr(tls, "handshake_ja3", None)
-            if ja3: tls_ja3[ja3] += 1
+            if ja3:
+                tls_ja3[ja3] += 1
     finally:
         tls_cap.close()
         try:

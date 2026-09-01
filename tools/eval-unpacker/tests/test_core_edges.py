@@ -1,5 +1,4 @@
 import pytest
-
 from eval_unpacker import core
 
 

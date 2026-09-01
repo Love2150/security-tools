@@ -55,7 +55,8 @@ def triage(events: Iterable[dict[str, Any]], parsing: dict[str, Any] | None = No
             summary["top_parents"][pimg] += 1
 
         # Network by process (Sysmon EID 3 typical)
-        dip = e.get("dest_ip"); dport = e.get("dest_port")
+        dip = e.get("dest_ip")
+        dport = e.get("dest_port")
         if img and dip:
             key = (Path(img).name, f"{dip}:{dport or '?'}")
             summary["net_by_process"][key] += 1
